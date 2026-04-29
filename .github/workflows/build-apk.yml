@@ -1,0 +1,42 @@
+# Builds installable APKs in CI (debug — signed with the default debug keystore).
+# Release builds need app/release.jks (gitignored); build those locally or add keystore secrets.
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-apk-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  debug:
+    name: assembleDebug
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Gradle assembleDebug
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon assembleDebug
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: playtorrio-debug-apks
+          path: |
+            app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
