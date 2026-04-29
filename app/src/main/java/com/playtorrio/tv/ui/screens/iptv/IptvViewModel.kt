@@ -17,6 +17,7 @@ import com.playtorrio.tv.data.iptv.IptvAliveChecker
 import com.playtorrio.tv.data.iptv.IptvAliveStore
 import com.playtorrio.tv.data.iptv.IptvChannelResultsStore
 import com.playtorrio.tv.data.iptv.HardcodedChannel
+import com.playtorrio.tv.data.iptv.IptvFavoritesStore
 import com.playtorrio.tv.data.iptv.HardcodedChannels
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -44,8 +45,14 @@ enum class IptvView {
     CHANNEL_RESULTS,
 }
 
+/** Sentinel id for favorite live channels (sidebar). */
+const val LIVE_FAVORITES_CATEGORY_ID = "__favorites__"
+
 /** Sentinel id meaning "all categories" in the browser sidebar. */
 const val LIVE_ALL_CATEGORY_ID = "__all__"
+
+/** Sentinel id for favorite live channels (sidebar). */
+const val LIVE_FAVORITES_CATEGORY_ID = "__favorites__"
 
 private fun keyOf(p: IptvPortal): String =
     "${p.url}|${p.username}|${p.password}".lowercase()
@@ -92,6 +99,8 @@ data class IptvUiState(
     val aliveTotal: Int = 0,
     val aliveCount: Int = 0,
     val aliveCheckedAt: Long = 0L,
+    /** Live TV — stream_ids the user marked as favorite (per portal, persisted). */
+    val favoriteStreamIds: Set<String> = emptySet(),
 
     // Hardcoded "Channels" hub (sports, news, etc. across all portals)
     val activeHardcoded: HardcodedChannel? = null,
@@ -404,6 +413,12 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
             browserSelectedCategoryId = LIVE_ALL_CATEGORY_ID,
             browserSearch = "",
             error = null,
+            favoriteStreamIds = if (section == IptvSection.LIVE) {
+                IptvFavoritesStore.loadIds(
+                    getApplication(),
+                    IptvAliveStore.portalKey(portal.portal),
+                )
+            } else emptySet(),
             // Reset live-only state and re-seed for LIVE.
             liveOnly = liveOnlyPref,
             aliveStreamIds = aliveIds,
@@ -442,6 +457,16 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setBrowserSearch(query: String) {
         _ui.value = _ui.value.copy(browserSearch = query)
+    }
+
+    fun toggleFavoriteLiveChannel(streamId: String) {
+        val portal = _ui.value.activePortal ?: return
+        if (_ui.value.activeSection != IptvSection.LIVE) return
+        val key = IptvAliveStore.portalKey(portal.portal)
+        val cur = _ui.value.favoriteStreamIds.toMutableSet()
+        if (streamId in cur) cur.remove(streamId) else cur.add(streamId)
+        IptvFavoritesStore.saveIds(getApplication(), key, cur)
+        _ui.value = _ui.value.copy(favoriteStreamIds = cur.toSet())
     }
 
     // ── Live-only verification ────────────────────────────────────────

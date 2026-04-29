@@ -41,7 +41,9 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
@@ -1328,15 +1330,19 @@ private fun BrowserView(state: IptvUiState, vm: IptvViewModel) {
     val filtered = remember(
         state.browserAllStreams, state.browserSelectedCategoryId, state.browserSearch,
         state.liveOnly, state.aliveStreamIds, state.isVerifyingAlive,
+        state.favoriteStreamIds,
     ) {
         val q = state.browserSearch.trim().lowercase()
         val base = if (q.isNotEmpty()) {
-            // Search overrides category filter — search across all.
             state.browserAllStreams.filter { it.name.lowercase().contains(q) }
-        } else if (state.browserSelectedCategoryId == LIVE_ALL_CATEGORY_ID) {
-            state.browserAllStreams
-        } else {
-            state.browserAllStreams.filter { it.categoryId == state.browserSelectedCategoryId }
+        } else when {
+            state.browserSelectedCategoryId == LIVE_ALL_CATEGORY_ID ->
+                state.browserAllStreams
+            section == IptvSection.LIVE &&
+                state.browserSelectedCategoryId == LIVE_FAVORITES_CATEGORY_ID ->
+                state.browserAllStreams.filter { it.streamId in state.favoriteStreamIds }
+            else ->
+                state.browserAllStreams.filter { it.categoryId == state.browserSelectedCategoryId }
         }
         // Live-only filter (LIVE section). While verifying we progressively
         // reveal the streams that have been confirmed alive.
@@ -1360,6 +1366,12 @@ private fun BrowserView(state: IptvUiState, vm: IptvViewModel) {
             onBack = { vm.back() },
         )
         if (section == IptvSection.LIVE) {
+            Text(
+                "Press Menu on a channel to add or remove it from Favorites.",
+                color = TextDim2,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(top = 6.dp, start = 4.dp),
+            )
             Spacer(Modifier.height(14.dp))
             LiveOnlyBar(state = state, vm = vm, toggleFocus = liveOnlyFocus)
         }
@@ -1418,6 +1430,20 @@ private fun BrowserView(state: IptvUiState, vm: IptvViewModel) {
                             modifier = Modifier.focusRequester(sidebarFirstFocus),
                         )
                     }
+                    if (section == IptvSection.LIVE) {
+                        val favCount = remember(countingStreams, state.favoriteStreamIds) {
+                            countingStreams.count { it.streamId in state.favoriteStreamIds }
+                        }
+                        item {
+                            SidebarCategory(
+                                name = "Favorites",
+                                count = favCount,
+                                selected = state.browserSelectedCategoryId == LIVE_FAVORITES_CATEGORY_ID,
+                                accent = accent,
+                                onClick = { vm.selectBrowserCategory(LIVE_FAVORITES_CATEGORY_ID) },
+                            )
+                        }
+                    }
                     items(state.categories) { c ->
                         val count = remember(c.id, countingStreams) {
                             countingStreams.count { it.categoryId == c.id }
@@ -1468,7 +1494,13 @@ private fun BrowserView(state: IptvUiState, vm: IptvViewModel) {
                         contentPadding = PaddingValues(end = 4.dp),
                     ) {
                         itemsIndexed(filtered) { index, s ->
-                            LiveChannelRow(s, index + 1, accent) {
+                            LiveChannelRow(
+                                s = s,
+                                number = index + 1,
+                                accent = accent,
+                                isFavorite = s.streamId in state.favoriteStreamIds,
+                                onToggleFavorite = { vm.toggleFavoriteLiveChannel(s.streamId) },
+                            ) {
                                 playStream(ctx, portal, s)
                             }
                         }
@@ -1632,6 +1664,8 @@ private fun LiveChannelRow(
     s: IptvStream,
     number: Int,
     accent: Color,
+    isFavorite: Boolean,
+    onToggleFavorite: () -> Unit,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
@@ -1640,7 +1674,17 @@ private fun LiveChannelRow(
         onClick = onClick,
         modifier = modifier
             .fillMaxWidth()
-            .onFocusChanged { focused = it.isFocused },
+            .onFocusChanged { focused = it.isFocused }
+            .onPreviewKeyEvent { e ->
+                if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (e.key) {
+                    Key.Menu -> {
+                        onToggleFavorite()
+                        true
+                    }
+                    else -> false
+                }
+            },
         colors = CardDefaults.colors(containerColor = Color.Transparent),
         scale = CardDefaults.scale(focusedScale = 1f),
         shape = CardDefaults.shape(RoundedCornerShape(10.dp)),
@@ -1654,7 +1698,7 @@ private fun LiveChannelRow(
                     color = if (focused) accent else Stroke,
                     shape = RoundedCornerShape(10.dp),
                 )
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = 10.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(Modifier.width(48.dp), contentAlignment = Alignment.Center) {
@@ -1698,6 +1742,13 @@ private fun LiveChannelRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            Icon(
+                imageVector = if (isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                contentDescription = if (isFavorite) "Favorite" else "Not favorite",
+                tint = if (isFavorite) Color(0xFFFBBF24) else TextDim2,
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(8.dp))
             if (focused) {
                 Icon(
                     Icons.Filled.PlayArrow,
