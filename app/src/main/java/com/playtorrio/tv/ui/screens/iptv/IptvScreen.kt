@@ -1411,15 +1411,20 @@ private fun BrowserView(state: IptvUiState, vm: IptvViewModel) {
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
                 )
+                val aliveActive = section == IptvSection.LIVE && state.liveOnly &&
+                    (state.aliveCheckedAt > 0L || state.isVerifyingAlive)
+                val countingStreams = if (aliveActive) {
+                    state.browserAllStreams.filter { it.streamId in state.aliveStreamIds }
+                } else state.browserAllStreams
+                val favCount = remember(section, countingStreams, state.favoriteStreamIds) {
+                    if (section == IptvSection.LIVE) {
+                        countingStreams.count { it.streamId in state.favoriteStreamIds }
+                    } else 0
+                }
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier.fillMaxHeight(),
                 ) {
-                    val aliveActive = section == IptvSection.LIVE && state.liveOnly &&
-                        (state.aliveCheckedAt > 0L || state.isVerifyingAlive)
-                    val countingStreams = if (aliveActive) {
-                        state.browserAllStreams.filter { it.streamId in state.aliveStreamIds }
-                    } else state.browserAllStreams
                     item {
                         SidebarCategory(
                             name = "All",
@@ -1431,9 +1436,6 @@ private fun BrowserView(state: IptvUiState, vm: IptvViewModel) {
                         )
                     }
                     if (section == IptvSection.LIVE) {
-                        val favCount = remember(countingStreams, state.favoriteStreamIds) {
-                            countingStreams.count { it.streamId in state.favoriteStreamIds }
-                        }
                         item {
                             SidebarCategory(
                                 name = "Favorites",
@@ -1664,8 +1666,8 @@ private fun LiveChannelRow(
     s: IptvStream,
     number: Int,
     accent: Color,
-    isFavorite: Boolean,
-    onToggleFavorite: () -> Unit,
+    isFavorite: Boolean = false,
+    onToggleFavorite: () -> Unit = {},
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {

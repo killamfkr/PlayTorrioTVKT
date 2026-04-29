@@ -51,9 +51,6 @@ const val LIVE_FAVORITES_CATEGORY_ID = "__favorites__"
 /** Sentinel id meaning "all categories" in the browser sidebar. */
 const val LIVE_ALL_CATEGORY_ID = "__all__"
 
-/** Sentinel id for favorite live channels (sidebar). */
-const val LIVE_FAVORITES_CATEGORY_ID = "__favorites__"
-
 private fun keyOf(p: IptvPortal): String =
     "${p.url}|${p.username}|${p.password}".lowercase()
 private fun keyOf(v: VerifiedPortal): String = keyOf(v.portal)
