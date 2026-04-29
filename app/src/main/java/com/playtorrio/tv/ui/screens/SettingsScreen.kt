@@ -41,7 +41,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -52,6 +52,10 @@ import com.playtorrio.tv.data.AppPreferences
 import com.playtorrio.tv.data.torrent.TorrServerService
 import com.playtorrio.tv.data.stremio.InstalledAddon
 import com.playtorrio.tv.data.stremio.StremioAddonRepository
+import com.playtorrio.tv.data.stremio.StremioAddonUrls
+import com.playtorrio.tv.data.sync.SupabaseSyncException
+import com.playtorrio.tv.data.sync.SupabaseUserSettingsClient
+import com.playtorrio.tv.BuildConfig
 import com.playtorrio.tv.server.DeviceIpAddress
 import com.playtorrio.tv.server.QrCodeGenerator
 import com.playtorrio.tv.server.SettingsConfigServer
@@ -86,6 +90,30 @@ fun SettingsScreen(navController: NavController) {
     var pendingChange by remember { mutableStateOf<SettingsConfigServer.PendingChange?>(null) }
     var isApplyingRemote by remember { mutableStateOf(false) }
     val confirmFocusRequester = remember { FocusRequester() }
+
+    // Cloud sync (Supabase — same backend as PlayTorrio mobile)
+    var supabaseEmailField by remember { mutableStateOf(AppPreferences.supabaseEmail) }
+    var supabasePassword by remember { mutableStateOf("") }
+    var cloudMessage by remember { mutableStateOf<String?>(null) }
+    var cloudError by remember { mutableStateOf<String?>(null) }
+    var cloudBusy by remember { mutableStateOf(false) }
+    val supabaseReady =
+        BuildConfig.SUPABASE_URL.isNotBlank() && BuildConfig.SUPABASE_ANON_KEY.isNotBlank()
+
+    LaunchedEffect(Unit) {
+        if (!supabaseReady) return@LaunchedEffect
+        val rt = AppPreferences.supabaseRefreshToken
+        if (rt.isBlank()) return@LaunchedEffect
+        runCatching {
+            val client = SupabaseUserSettingsClient(
+                BuildConfig.SUPABASE_URL,
+                BuildConfig.SUPABASE_ANON_KEY
+            )
+            val s = client.refreshSession(rt)
+            AppPreferences.supabaseAccessToken = s.accessToken
+            AppPreferences.supabaseRefreshToken = s.refreshToken ?: rt
+        }
+    }
 
     // Start server when screen opens, stop on dispose
     DisposableEffect(Unit) {
@@ -234,6 +262,404 @@ fun SettingsScreen(navController: NavController) {
                 onCheckedChange = {
                     streamingMode = it
                     AppPreferences.streamingMode = it
+                }
+            )
+
+            // ── Cloud account (Supabase) — same Stremio addons as PlayTorrio mobile ──
+            Spacer(Modifier.height(32.dp))
+            Text(
+                text = "ACCOUNT (PLAYTORRIO MOBILE)",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    letterSpacing = 1.5.sp
+                ),
+                color = Color.White.copy(alpha = 0.4f)
+            )
+            Spacer(Modifier.height(12.dp))
+
+            val loggedIn =
+                AppPreferences.supabaseAccessToken.isNotBlank() &&
+                    AppPreferences.supabaseUserId.isNotBlank()
+
+            fun syncClient(): SupabaseUserSettingsClient? =
+                if (supabaseReady) {
+                    SupabaseUserSettingsClient(BuildConfig.SUPABASE_URL, BuildConfig.SUPABASE_ANON_KEY)
+                } else null
+
+            var defaultStreamKey by remember {
+                mutableStateOf(
+                    when {
+                        AppPreferences.defaultStremioTransportUrl.isEmpty() -> "__auto__"
+                        AppPreferences.defaultStremioTransportUrl ==
+                            AppPreferences.DEFAULT_STREAM_FORCE_PLAYTORRIO -> "__playtorrio__"
+                        else -> AppPreferences.defaultStremioTransportUrl
+                    }
+                )
+            }
+
+            suspend fun applyCloudRow(row: SupabaseUserSettingsClient.UserSettingsRow?) {
+                if (row == null) return
+                val parsed = syncClient()?.parseInstalledAddonsFromMobileJson(row.stremioAddonsJson)
+                    ?: emptyList()
+                StremioAddonRepository.replaceAllAddons(parsed)
+                addons = StremioAddonRepository.getAddons()
+                val raw = row.defaultStreamSource?.trim()
+                if (raw.isNullOrEmpty()) {
+                    AppPreferences.defaultStremioTransportUrl = ""
+                    defaultStreamKey = "__auto__"
+                } else if (raw == AppPreferences.DEFAULT_STREAM_FORCE_PLAYTORRIO) {
+                    AppPreferences.defaultStremioTransportUrl = AppPreferences.DEFAULT_STREAM_FORCE_PLAYTORRIO
+                    defaultStreamKey = "__playtorrio__"
+                } else {
+                    AppPreferences.defaultStremioTransportUrl = raw
+                    defaultStreamKey = raw
+                }
+            }
+
+            if (!supabaseReady) {
+                Text(
+                    text = "Add SUPABASE_URL and SUPABASE_ANON_KEY to app/build.gradle.kts (BuildConfig) " +
+                        "to enable login.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.45f)
+                )
+            } else if (!loggedIn) {
+                var emailFocused by remember { mutableStateOf(false) }
+                var pwFocused by remember { mutableStateOf(false) }
+                Text(
+                    text = "Sign in with the same email and password as PlayTorrio on your phone. " +
+                        "Then pull to download addons and your preferred stream source.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.5f)
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(0.75f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    BasicTextField(
+                        value = supabaseEmailField,
+                        onValueChange = {
+                            supabaseEmailField = it
+                            cloudError = null
+                            cloudMessage = null
+                        },
+                        singleLine = true,
+                        textStyle = TextStyle(color = Color.White, fontSize = 14.sp),
+                        cursorBrush = SolidColor(AccentPrimary),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (emailFocused) Color.White.copy(alpha = 0.08f)
+                                else Color.White.copy(alpha = 0.04f)
+                            )
+                            .border(
+                                1.dp,
+                                if (emailFocused) AccentPrimary.copy(alpha = 0.6f)
+                                else Color.White.copy(alpha = 0.08f),
+                                RoundedCornerShape(10.dp)
+                            )
+                            .onFocusChanged { emailFocused = it.hasFocus }
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        decorationBox = { inner ->
+                            if (supabaseEmailField.isEmpty()) {
+                                Text("Email", color = Color.White.copy(alpha = 0.3f), fontSize = 14.sp)
+                            }
+                            inner()
+                        }
+                    )
+                    BasicTextField(
+                        value = supabasePassword,
+                        onValueChange = {
+                            supabasePassword = it
+                            cloudError = null
+                            cloudMessage = null
+                        },
+                        singleLine = true,
+                        textStyle = TextStyle(color = Color.White, fontSize = 14.sp),
+                        cursorBrush = SolidColor(AccentPrimary),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (pwFocused) Color.White.copy(alpha = 0.08f)
+                                else Color.White.copy(alpha = 0.04f)
+                            )
+                            .border(
+                                1.dp,
+                                if (pwFocused) AccentPrimary.copy(alpha = 0.6f)
+                                else Color.White.copy(alpha = 0.08f),
+                                RoundedCornerShape(10.dp)
+                            )
+                            .onFocusChanged { pwFocused = it.hasFocus }
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        decorationBox = { inner ->
+                            if (supabasePassword.isEmpty()) {
+                                Text("Password", color = Color.White.copy(alpha = 0.3f), fontSize = 14.sp)
+                            }
+                            inner()
+                        }
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    var pullFocused by remember { mutableStateOf(false) }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (pullFocused) AccentPrimary else AccentPrimary.copy(alpha = 0.7f)
+                            )
+                            .onFocusChanged { pullFocused = it.hasFocus }
+                            .focusable()
+                            .onKeyEvent { evt ->
+                                if (evt.type == KeyEventType.KeyDown &&
+                                    (evt.key == Key.DirectionCenter || evt.key == Key.Enter) &&
+                                    !cloudBusy
+                                ) {
+                                    scope.launch {
+                                        cloudBusy = true
+                                        cloudError = null
+                                        cloudMessage = null
+                                        try {
+                                            val client = syncClient()!!
+                                            val s = client.signInWithPassword(
+                                                supabaseEmailField,
+                                                supabasePassword
+                                            )
+                                            AppPreferences.supabaseAccessToken = s.accessToken
+                                            AppPreferences.supabaseRefreshToken = s.refreshToken.orEmpty()
+                                            AppPreferences.supabaseUserId = s.userId
+                                            AppPreferences.supabaseEmail = supabaseEmailField.trim()
+                                            val row = client.fetchUserSettings(s.accessToken, s.userId)
+                                            applyCloudRow(row)
+                                            cloudMessage = if (row != null) {
+                                                "Signed in and synced from cloud."
+                                            } else {
+                                                "Signed in. No cloud row yet — use Push from mobile first."
+                                            }
+                                            supabasePassword = ""
+                                        } catch (e: Exception) {
+                                            cloudError = (e as? SupabaseSyncException)?.message
+                                                ?: e.message ?: "Sync failed"
+                                        } finally {
+                                            cloudBusy = false
+                                        }
+                                    }
+                                    true
+                                } else false
+                            }
+                            .padding(horizontal = 18.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (cloudBusy) {
+                            CircularProgressIndicator(
+                                Modifier.size(18.dp),
+                                Color.White,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text(
+                                "Sign in & pull",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                }
+            } else {
+                Text(
+                    text = "Signed in as ${AppPreferences.supabaseEmail.ifBlank { "account" }}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.65f)
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    var pullOnlyFocused by remember { mutableStateOf(false) }
+                    var pushFocused by remember { mutableStateOf(false) }
+                    var outFocused by remember { mutableStateOf(false) }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (pullOnlyFocused) AccentPrimary else AccentPrimary.copy(alpha = 0.7f)
+                            )
+                            .onFocusChanged { pullOnlyFocused = it.hasFocus }
+                            .focusable()
+                            .onKeyEvent { evt ->
+                                if (evt.type == KeyEventType.KeyDown &&
+                                    (evt.key == Key.DirectionCenter || evt.key == Key.Enter) &&
+                                    !cloudBusy
+                                ) {
+                                    scope.launch {
+                                        cloudBusy = true
+                                        cloudError = null
+                                        cloudMessage = null
+                                        try {
+                                            val client = syncClient()!!
+                                            var token = AppPreferences.supabaseAccessToken
+                                            if (token.isBlank()) {
+                                                val rt = AppPreferences.supabaseRefreshToken
+                                                if (rt.isBlank()) throw SupabaseSyncException("Session expired — sign in again.")
+                                                val s = client.refreshSession(rt)
+                                                AppPreferences.supabaseAccessToken = s.accessToken
+                                                AppPreferences.supabaseRefreshToken = s.refreshToken ?: rt
+                                                token = s.accessToken
+                                            }
+                                            val uid = AppPreferences.supabaseUserId
+                                            val row = client.fetchUserSettings(token, uid)
+                                            applyCloudRow(row)
+                                            cloudMessage = "Pulled latest from cloud."
+                                        } catch (e: Exception) {
+                                            cloudError = (e as? SupabaseSyncException)?.message
+                                                ?: e.message ?: "Pull failed"
+                                        } finally {
+                                            cloudBusy = false
+                                        }
+                                    }
+                                    true
+                                } else false
+                            }
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (cloudBusy) {
+                            CircularProgressIndicator(
+                                Modifier.size(18.dp),
+                                Color.White,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text("Pull from cloud", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (pushFocused) AccentSecondary else AccentSecondary.copy(alpha = 0.65f)
+                            )
+                            .onFocusChanged { pushFocused = it.hasFocus }
+                            .focusable()
+                            .onKeyEvent { evt ->
+                                if (evt.type == KeyEventType.KeyDown &&
+                                    (evt.key == Key.DirectionCenter || evt.key == Key.Enter) &&
+                                    !cloudBusy
+                                ) {
+                                    scope.launch {
+                                        cloudBusy = true
+                                        cloudError = null
+                                        cloudMessage = null
+                                        try {
+                                            val client = syncClient()!!
+                                            var token = AppPreferences.supabaseAccessToken
+                                            if (token.isBlank()) {
+                                                val rt = AppPreferences.supabaseRefreshToken
+                                                if (rt.isBlank()) throw SupabaseSyncException("Session expired — sign in again.")
+                                                val s = client.refreshSession(rt)
+                                                AppPreferences.supabaseAccessToken = s.accessToken
+                                                AppPreferences.supabaseRefreshToken = s.refreshToken ?: rt
+                                                token = s.accessToken
+                                            }
+                                            val uid = AppPreferences.supabaseUserId
+                                            val json = client.installedAddonsToMobileJson(
+                                                StremioAddonRepository.getAddons()
+                                            )
+                                            val def = AppPreferences.defaultStremioTransportUrl
+                                                .takeIf { it.isNotBlank() }
+                                            client.upsertUserSettings(token, uid, json, def)
+                                            cloudMessage = "Pushed this profile to cloud."
+                                        } catch (e: Exception) {
+                                            cloudError = (e as? SupabaseSyncException)?.message
+                                                ?: e.message ?: "Push failed"
+                                        } finally {
+                                            cloudBusy = false
+                                        }
+                                    }
+                                    true
+                                } else false
+                            }
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Push to cloud", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (outFocused) Color(0xFF7F1D1D) else Color(0xFF991B1B).copy(alpha = 0.85f)
+                            )
+                            .onFocusChanged { outFocused = it.hasFocus }
+                            .focusable()
+                            .onKeyEvent { evt ->
+                                if (evt.type == KeyEventType.KeyDown &&
+                                    (evt.key == Key.DirectionCenter || evt.key == Key.Enter)
+                                ) {
+                                    AppPreferences.clearSupabaseSession()
+                                    supabaseEmailField = ""
+                                    supabasePassword = ""
+                                    cloudMessage = "Signed out."
+                                    cloudError = null
+                                    true
+                                } else false
+                            }
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Sign out", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+                }
+            }
+
+            cloudError?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, color = Color(0xFFF87171), fontSize = 12.sp)
+            }
+            cloudMessage?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, color = Color(0xFF4ADE80), fontSize = 12.sp)
+            }
+
+            val streamChoiceOptions = remember(addons) {
+                buildList {
+                    add("__auto__" to "Auto")
+                    add("__playtorrio__" to "Built-in scrapers")
+                    addons.forEach { a ->
+                        add(a.transportUrl to a.manifest.name.ifBlank { a.manifest.id })
+                    }
+                }
+            }
+            LaunchedEffect(addons, defaultStreamKey) {
+                if (defaultStreamKey != "__auto__" && defaultStreamKey != "__playtorrio__" &&
+                    addons.none { it.transportUrl == defaultStreamKey }
+                ) {
+                    defaultStreamKey = "__auto__"
+                    AppPreferences.defaultStremioTransportUrl = ""
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            SettingsChoiceRow(
+                title = "Default stream source",
+                description = "Matches mobile “default Stremio addon”. Auto picks the first addon that has streams.",
+                options = streamChoiceOptions,
+                selectedValue = defaultStreamKey,
+                onSelected = { key ->
+                    defaultStreamKey = key
+                    when (key) {
+                        "__auto__" -> AppPreferences.defaultStremioTransportUrl = ""
+                        "__playtorrio__" ->
+                            AppPreferences.defaultStremioTransportUrl =
+                                AppPreferences.DEFAULT_STREAM_FORCE_PLAYTORRIO
+                        else -> AppPreferences.defaultStremioTransportUrl = key
+                    }
                 }
             )
 
@@ -809,7 +1235,7 @@ fun SettingsScreen(navController: NavController) {
                             },
                             onConfigure = {
                                 // Open configure page in browser
-                                val configUrl = "${addon.transportUrl}/configure"
+                                val configUrl = StremioAddonUrls.configurePageUrl(addon.transportUrl)
                                 val intent = android.content.Intent(
                                     android.content.Intent.ACTION_VIEW,
                                     android.net.Uri.parse(configUrl)

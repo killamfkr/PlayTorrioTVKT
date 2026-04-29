@@ -17,6 +17,9 @@ android {
 
         // GitHub repo used by the in-app updater (UpdateChecker reads BuildConfig.UPDATE_REPO)
         buildConfigField("String", "UPDATE_REPO", "\"ayman708-UX/PlayTorrioTVKT\"")
+        // Same Supabase project as PlayTorrio mobile — set in dashboard → Settings → API
+        buildConfigField("String", "SUPABASE_URL", "\"\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"\"")
     }
 
     signingConfigs {

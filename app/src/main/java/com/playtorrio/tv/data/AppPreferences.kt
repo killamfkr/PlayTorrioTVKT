@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.SharedPreferences
 
 object AppPreferences {
+    /** Same sentinel as PlayTorrio mobile [SettingsService.streamSourceForcePlayTorrio]. */
+    const val DEFAULT_STREAM_FORCE_PLAYTORRIO = "__pref_playtorrio__"
+
     private const val PREFS_BASE = "playtorrio_prefs"
     private const val KEY_STREAMING_MODE = "streaming_mode"
     private const val KEY_DEBRID_ENABLED = "debrid_enabled"
@@ -26,6 +29,11 @@ object AppPreferences {
     private const val KEY_SAVED_AUDIOBOOKS = "saved_audiobooks_v1"
     private const val KEY_AUDIOBOOK_PROGRESS = "audiobook_progress_v1"
     private const val KEY_WATCH_PROGRESS = "watch_progress_v1"
+    private const val KEY_DEFAULT_STREMIO_TRANSPORT = "default_stremio_transport_url"
+    private const val KEY_SUPABASE_ACCESS_TOKEN = "supabase_access_token"
+    private const val KEY_SUPABASE_REFRESH_TOKEN = "supabase_refresh_token"
+    private const val KEY_SUPABASE_USER_ID = "supabase_user_id"
+    private const val KEY_SUPABASE_EMAIL = "supabase_email"
 
     private lateinit var prefs: SharedPreferences
 
@@ -125,6 +133,40 @@ object AppPreferences {
     var watchProgress: String
         get() = prefs.getString(KEY_WATCH_PROGRESS, "[]") ?: "[]"
         set(value) = prefs.edit().putString(KEY_WATCH_PROGRESS, value).apply()
+
+    /**
+     * Preferred Stremio addon for streams when multiple addons apply (matches mobile
+     * `default_stremio_addon_base_url` using transport/base URL without `/manifest.json`).
+     * Empty = automatic first-match behavior.
+     */
+    var defaultStremioTransportUrl: String
+        get() = prefs.getString(KEY_DEFAULT_STREMIO_TRANSPORT, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_DEFAULT_STREMIO_TRANSPORT, value.trim()).apply()
+
+    var supabaseAccessToken: String
+        get() = prefs.getString(KEY_SUPABASE_ACCESS_TOKEN, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_SUPABASE_ACCESS_TOKEN, value).apply()
+
+    var supabaseRefreshToken: String
+        get() = prefs.getString(KEY_SUPABASE_REFRESH_TOKEN, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_SUPABASE_REFRESH_TOKEN, value).apply()
+
+    var supabaseUserId: String
+        get() = prefs.getString(KEY_SUPABASE_USER_ID, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_SUPABASE_USER_ID, value).apply()
+
+    var supabaseEmail: String
+        get() = prefs.getString(KEY_SUPABASE_EMAIL, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_SUPABASE_EMAIL, value).apply()
+
+    fun clearSupabaseSession() {
+        prefs.edit()
+            .remove(KEY_SUPABASE_ACCESS_TOKEN)
+            .remove(KEY_SUPABASE_REFRESH_TOKEN)
+            .remove(KEY_SUPABASE_USER_ID)
+            .remove(KEY_SUPABASE_EMAIL)
+            .apply()
+    }
 
     fun applyTorrentPreset(preset: String) {
         when (preset.lowercase()) {

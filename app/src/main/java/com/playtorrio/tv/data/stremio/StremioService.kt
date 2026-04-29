@@ -1,6 +1,7 @@
 package com.playtorrio.tv.data.stremio
 
 import android.util.Log
+import com.playtorrio.tv.data.AppPreferences
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -44,6 +45,20 @@ object StremioService {
         URLEncoder.encode(value, "UTF-8")
             .replace("+", "%20")
             .replace("%3A", ":")
+
+    private fun resolvePreferredAddonId(
+        addons: List<InstalledAddon>,
+        preferredAddonId: String?,
+        defaultTransportUrl: String?
+    ): String? {
+        preferredAddonId?.takeIf { it.isNotBlank() }?.let { return it }
+        val dt = defaultTransportUrl?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        if (dt == com.playtorrio.tv.data.AppPreferences.DEFAULT_STREAM_FORCE_PLAYTORRIO) return null
+        val key = StremioAddonUrls.normalizeTransportKey(dt)
+        return addons.firstOrNull {
+            StremioAddonUrls.normalizeTransportKey(it.transportUrl) == key
+        }?.manifest?.id
+    }
 
     private fun buildCandidates(
         addons: List<InstalledAddon>,
@@ -146,7 +161,10 @@ object StremioService {
         val encodedType = encodePathSegment(type)
         val encodedCatalogId = encodePathSegment(catalogId)
         val extraSegment = if (extra.isNotEmpty()) "/${encodeExtra(extra)}" else ""
-        val url = "${addon.transportUrl}/catalog/$encodedType/$encodedCatalogId$extraSegment.json"
+        val url = StremioAddonUrls.appendPath(
+            addon.transportUrl,
+            "/catalog/$encodedType/$encodedCatalogId$extraSegment.json"
+        )
         val body = get(url) ?: return@withTimeoutOrNull null
         runCatching { gson.fromJson(body, CatalogResponse::class.java) }.getOrNull()
     }
@@ -225,14 +243,23 @@ object StremioService {
         addons: List<InstalledAddon>,
         type: String,
         id: String,
-        preferredAddonId: String? = null
+        preferredAddonId: String? = null,
+        defaultStremioTransportUrl: String? = null
     ): StremioMeta? = withContext(Dispatchers.IO) {
-        val candidates = buildCandidates(addons, "meta", type, id, preferredAddonId)
+        val effectivePreferred = resolvePreferredAddonId(
+            addons,
+            preferredAddonId,
+            defaultStremioTransportUrl ?: AppPreferences.defaultStremioTransportUrl.takeIf { it.isNotBlank() }
+        )
+        val candidates = buildCandidates(addons, "meta", type, id, effectivePreferred)
         val encodedType = encodePathSegment(type)
         val encodedId = encodePathSegment(id)
         for (addon in candidates) {
             val result = withTimeoutOrNull(META_TIMEOUT_MS) {
-                val url = "${addon.transportUrl}/meta/$encodedType/$encodedId.json"
+                val url = StremioAddonUrls.appendPath(
+                    addon.transportUrl,
+                    "/meta/$encodedType/$encodedId.json"
+                )
                 val body = get(url) ?: return@withTimeoutOrNull null
                 runCatching { gson.fromJson(body, MetaResponse::class.java)?.meta }.getOrNull()
             }
@@ -251,16 +278,25 @@ object StremioService {
         addons: List<InstalledAddon>,
         type: String,
         id: String,
-        preferredAddonId: String? = null
+        preferredAddonId: String? = null,
+        defaultStremioTransportUrl: String? = null
     ): List<StremioStream> = coroutineScope {
-        val candidates = buildCandidates(addons, "stream", type, id, preferredAddonId)
+        val effectivePreferred = resolvePreferredAddonId(
+            addons,
+            preferredAddonId,
+            defaultStremioTransportUrl ?: AppPreferences.defaultStremioTransportUrl.takeIf { it.isNotBlank() }
+        )
+        val candidates = buildCandidates(addons, "stream", type, id, effectivePreferred)
         val encodedType = encodePathSegment(type)
         val encodedId = encodePathSegment(id)
         val jobs = candidates.map { addon ->
             async {
                 runCatching {
                     withTimeoutOrNull(STREAM_TIMEOUT_MS) {
-                        val url = "${addon.transportUrl}/stream/$encodedType/$encodedId.json"
+                        val url = StremioAddonUrls.appendPath(
+                            addon.transportUrl,
+                            "/stream/$encodedType/$encodedId.json"
+                        )
                         val body = get(url) ?: return@withTimeoutOrNull emptyList()
                         val resp = gson.fromJson(body, StreamResponse::class.java)
                         resp?.streams?.map { stream ->
@@ -290,9 +326,15 @@ object StremioService {
         videoHash: String? = null,
         videoSize: Long? = null,
         filename: String? = null,
-        preferredAddonId: String? = null
+        preferredAddonId: String? = null,
+        defaultStremioTransportUrl: String? = null
     ): List<StremioSubtitle> = coroutineScope {
-        val candidates = buildCandidates(addons, "subtitles", type, id, preferredAddonId)
+        val effectivePreferred = resolvePreferredAddonId(
+            addons,
+            preferredAddonId,
+            defaultStremioTransportUrl ?: AppPreferences.defaultStremioTransportUrl.takeIf { it.isNotBlank() }
+        )
+        val candidates = buildCandidates(addons, "subtitles", type, id, effectivePreferred)
         Log.i(TAG, "Subtitle candidates: ${candidates.size}/${addons.size} addons (type=$type id=$id)")
         for (a in addons) {
             val relevant = isRelevant(a, "subtitles", type, id)
@@ -311,7 +353,10 @@ object StremioService {
             async {
                 runCatching {
                     withTimeoutOrNull(CATALOG_TIMEOUT_MS) {
-                        val url = "${addon.transportUrl}/subtitles/$encodedType/$encodedId$extraSegment.json"
+                        val url = StremioAddonUrls.appendPath(
+                            addon.transportUrl,
+                            "/subtitles/$encodedType/$encodedId$extraSegment.json"
+                        )
                         Log.i(TAG, "Subtitle fetch: $url")
                         val body = get(url) ?: return@withTimeoutOrNull emptyList()
                         val parsed = gson.fromJson(body, SubtitlesResponse::class.java)?.subtitles
