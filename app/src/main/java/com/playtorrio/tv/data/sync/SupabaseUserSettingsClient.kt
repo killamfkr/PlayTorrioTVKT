@@ -139,7 +139,10 @@ class SupabaseUserSettingsClient(
 
     suspend fun fetchUserSettings(accessToken: String, userId: String): UserSettingsRow? =
         withContext(Dispatchers.IO) {
-            val url = "$base/rest/v1/user_settings?user_id=eq.$userId&select=stremio_addons,default_stream_source"
+            // Use select=* so we do not depend on PostgREST validating a fixed column list
+            // (also avoids stale cache rejecting renamed projections). Parse optional keys below.
+            val url =
+                "$base/rest/v1/user_settings?user_id=eq.$userId&select=*"
             val req = Request.Builder()
                 .url(url)
                 .header("apikey", anonKey)
@@ -149,7 +152,9 @@ class SupabaseUserSettingsClient(
             http.newCall(req).execute().use { resp ->
                 val text = resp.body?.string().orEmpty()
                 if (!resp.isSuccessful) {
-                    throw SupabaseSyncException("Load settings failed: ${resp.code} $text")
+                    throw SupabaseSyncException(
+                        formatLoadError(resp.code, text)
+                    )
                 }
                 val arr = gson.fromJson(text, JsonArray::class.java)
                     ?: return@withContext null
@@ -161,6 +166,21 @@ class SupabaseUserSettingsClient(
                 UserSettingsRow(stremioAddonsJson = addonsJson, defaultStreamSource = defaultSrc)
             }
         }
+
+    private fun formatLoadError(code: Int, body: String): String {
+        val hint =
+            "Run supabase/user_settings_columns.sql in the SQL Editor (adds columns + reloads API schema). " +
+                "Confirm the project URL matches this app."
+        return when {
+            body.contains("\"42703\"") ||
+                body.contains("42703", ignoreCase = true) ||
+                (body.contains("stremio_addons", ignoreCase = true) &&
+                    body.contains("does not exist", ignoreCase = true)) ->
+                "Database missing stremio_addons column. $hint Raw: $code $body"
+
+            else -> "Load settings failed: $code $body"
+        }
+    }
 
     suspend fun upsertUserSettings(
         accessToken: String,
@@ -188,7 +208,17 @@ class SupabaseUserSettingsClient(
         http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
                 val text = resp.body?.string().orEmpty()
-                throw SupabaseSyncException("Save failed: ${resp.code} $text")
+                throw SupabaseSyncException(
+                    if (text.contains("42703") ||
+                        (text.contains("stremio_addons", ignoreCase = true) &&
+                            text.contains("does not exist", ignoreCase = true))
+                    ) {
+                        "Database missing stremio_addons column. " +
+                            "Run supabase/user_settings_columns.sql in the SQL Editor. Raw: ${resp.code} $text"
+                    } else {
+                        "Save failed: ${resp.code} $text"
+                    }
+                )
             }
         }
     }
