@@ -34,6 +34,9 @@ import java.util.concurrent.TimeUnit
  *   with check (auth.uid() = user_id);
  * ```
  *
+ * If the table already existed **without** `stremio_addons`, run the migration in
+ * `supabase/user_settings_columns.sql` (add column … if not exists).
+ *
  * The mobile app stores each addon as `{ "baseUrl", "manifest", ... }`; we persist the same
  * JSON shape so rows round-trip.
  */
