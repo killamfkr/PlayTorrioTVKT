@@ -1,5 +1,7 @@
 @file:OptIn(ExperimentalFoundationApi::class)
 
+package com.playtorrio.tv.ui.screens.iptv
+
 import android.content.Intent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -2423,8 +2425,8 @@ private fun ChannelResultsView(state: IptvUiState, vm: IptvViewModel) {
             ) {
                 itemsIndexed(
                     filteredResults,
-                    key = { _, h -> h.streamUrl },
-                ) { index, hit ->
+                    key = { _: Int, h: ChannelHit -> h.streamUrl },
+                ) { index: Int, hit: ChannelHit ->
                     val isSelected = hit.streamUrl in selected
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
