@@ -1,10 +1,13 @@
-package com.playtorrio.tv.ui.screens.iptv
+@file:OptIn(ExperimentalFoundationApi::class)
 
 import android.content.Intent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -218,6 +221,12 @@ private fun PortalListView(state: IptvUiState, vm: IptvViewModel, onBack: () -> 
             // Edit toggle (only when we have results)
             if (state.verified.isNotEmpty()) {
                 IconPill(
+                    icon = Icons.Filled.Star,
+                    selected = state.favoritePortalsOnly,
+                    onClick = { vm.setFavoritePortalsOnly(!state.favoritePortalsOnly) },
+                )
+                Spacer(Modifier.width(10.dp))
+                IconPill(
                     icon = if (state.editMode) Icons.Filled.Done else Icons.Filled.Edit,
                     selected = state.editMode,
                     onClick = { vm.toggleEditMode() },
@@ -270,21 +279,39 @@ private fun PortalListView(state: IptvUiState, vm: IptvViewModel, onBack: () -> 
                 hint = "Press Scrape to discover free IPTV portals",
             )
         } else if (state.verified.isNotEmpty()) {
+            val displayPortals = remember(state.verified, state.favoritePortalsOnly, state.favoritePortalKeys) {
+                if (state.favoritePortalsOnly) {
+                    state.verified.filter { p ->
+                        portalKey(p) in state.favoritePortalKeys
+                    }
+                } else state.verified
+            }
+            if (state.favoritePortalsOnly && displayPortals.isEmpty()) {
+                EmptyState(
+                    icon = Icons.Filled.LiveTv,
+                    title = "No favorite portals",
+                    hint = "Long-press a portal to star it, or turn off Favorites only",
+                )
+            } else {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 contentPadding = PaddingValues(vertical = 4.dp),
             ) {
-                items(state.verified) { portal ->
-                    val key = "${portal.portal.url}|${portal.portal.username}|${portal.portal.password}".lowercase()
+                items(displayPortals) { portal ->
+                    val key = portalKey(portal)
                     PortalCard(
                         portal = portal,
                         editMode = state.editMode,
                         selected = key in state.selected,
+                        isFavoritePortal = key in state.favoritePortalKeys,
                         onClick = {
                             if (state.editMode) vm.toggleSelect(portal)
                             else vm.openPortal(portal)
+                        },
+                        onLongClick = {
+                            if (!state.editMode) vm.toggleFavoritePortal(portal)
                         },
                     )
                 }
@@ -296,6 +323,7 @@ private fun PortalListView(state: IptvUiState, vm: IptvViewModel, onBack: () -> 
                         )
                     }
                 }
+            }
             }
         }
     }
@@ -810,7 +838,9 @@ private fun PortalCard(
     portal: VerifiedPortal,
     editMode: Boolean,
     selected: Boolean,
+    isFavoritePortal: Boolean,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (focused) 1.03f else 1f, tween(160), label = "s")
@@ -819,18 +849,21 @@ private fun PortalCard(
 
     val borderColor = when {
         editMode && selected -> Danger
+        isFavoritePortal && !editMode -> Color(0xFFFBBF24).copy(alpha = 0.7f)
         focused -> Accent
         else -> Stroke
     }
 
-    Card(
-        onClick = onClick,
-        modifier = Modifier
+    Box(
+        Modifier
             .fillMaxWidth()
             .scale(scale)
-            .onFocusChanged { focused = it.isFocused },
-        colors = CardDefaults.colors(containerColor = Color.Transparent),
-        shape = CardDefaults.shape(RoundedCornerShape(16.dp)),
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = if (!editMode) onLongClick else null,
+            )
     ) {
         Box(
             Modifier
@@ -847,7 +880,7 @@ private fun PortalCard(
                     )
                 )
                 .border(
-                    width = if (focused || (editMode && selected)) 2.dp else 1.dp,
+                    width = if (focused || (editMode && selected) || isFavoritePortal) 2.dp else 1.dp,
                     color = borderColor,
                     shape = RoundedCornerShape(16.dp),
                 )
@@ -890,6 +923,15 @@ private fun PortalCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                    }
+                    if (isFavoritePortal) {
+                        Icon(
+                            Icons.Filled.Star,
+                            contentDescription = "Favorite portal",
+                            tint = Color(0xFFFBBF24),
+                            modifier = Modifier.size(22.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
                     }
                     if (!editMode) StatusPill()
                 }
@@ -1367,7 +1409,7 @@ private fun BrowserView(state: IptvUiState, vm: IptvViewModel) {
         )
         if (section == IptvSection.LIVE) {
             Text(
-                "Press Menu on a channel to add or remove it from Favorites.",
+                "Hold Select on a channel to favorite it (short press plays). Long-press a portal card to star it.",
                 color = TextDim2,
                 fontSize = 11.sp,
                 modifier = Modifier.padding(top = 6.dp, start = 4.dp),
@@ -1672,24 +1714,15 @@ private fun LiveChannelRow(
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
-    Card(
-        onClick = onClick,
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .onFocusChanged { focused = it.isFocused }
-            .onPreviewKeyEvent { e ->
-                if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                when (e.key) {
-                    Key.Menu -> {
-                        onToggleFavorite()
-                        true
-                    }
-                    else -> false
-                }
-            },
-        colors = CardDefaults.colors(containerColor = Color.Transparent),
-        scale = CardDefaults.scale(focusedScale = 1f),
-        shape = CardDefaults.shape(RoundedCornerShape(10.dp)),
+            .focusable()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onToggleFavorite,
+            )
     ) {
         Row(
             Modifier
@@ -2402,6 +2435,10 @@ private fun ChannelResultsView(state: IptvUiState, vm: IptvViewModel) {
                                 s = hit.stream,
                                 number = index + 1,
                                 accent = if (selectMode && isSelected) Danger else accent,
+                                isFavorite = vm.isFavoriteStream(hit.portal, hit.stream.streamId),
+                                onToggleFavorite = {
+                                    vm.toggleFavoriteStream(hit.portal, hit.stream.streamId)
+                                },
                                 modifier = if (index == 0)
                                     Modifier.focusRequester(firstFocus)
                                 else Modifier,

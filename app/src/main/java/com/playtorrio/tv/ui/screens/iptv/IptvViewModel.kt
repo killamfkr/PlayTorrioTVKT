@@ -55,6 +55,8 @@ private fun keyOf(p: IptvPortal): String =
     "${p.url}|${p.username}|${p.password}".lowercase()
 private fun keyOf(v: VerifiedPortal): String = keyOf(v.portal)
 
+fun portalKey(portal: VerifiedPortal): String = keyOf(portal)
+
 data class IptvUiState(
     val view: IptvView = IptvView.PORTAL_LIST,
 
@@ -68,6 +70,11 @@ data class IptvUiState(
     // Edit mode
     val editMode: Boolean = false,
     val selected: Set<String> = emptySet(),
+
+    /** Portal keys (scraped / saved) the user marked as favorites on the main list. */
+    val favoritePortalKeys: Set<String> = emptySet(),
+    /** When true, main portal grid shows only favorite portals. */
+    val favoritePortalsOnly: Boolean = false,
 
     // Manual add dialog
     val showAddDialog: Boolean = false,
@@ -132,7 +139,13 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         val saved = IptvStore.load(app)
-        if (saved.isNotEmpty()) _ui.value = _ui.value.copy(verified = saved)
+        val favKeys = IptvFavoritesStore.loadFavoritePortalKeys(app)
+        if (saved.isNotEmpty() || favKeys.isNotEmpty()) {
+            _ui.value = _ui.value.copy(
+                verified = saved,
+                favoritePortalKeys = favKeys,
+            )
+        }
     }
 
     // ── Scrape / verify ────────────────────────────────────────────────
@@ -459,12 +472,44 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleFavoriteLiveChannel(streamId: String) {
         val portal = _ui.value.activePortal ?: return
         if (_ui.value.activeSection != IptvSection.LIVE) return
-        val key = IptvAliveStore.portalKey(portal.portal)
-        val cur = _ui.value.favoriteStreamIds.toMutableSet()
+        setFavoriteStreamForPortal(portal.portal, streamId)
+    }
+
+    /** Toggle favorite for any portal’s live stream (browser or channel search results). */
+    fun toggleFavoriteStream(portal: VerifiedPortal, streamId: String) {
+        setFavoriteStreamForPortal(portal.portal, streamId)
+    }
+
+    private fun setFavoriteStreamForPortal(portal: IptvPortal, streamId: String) {
+        val key = IptvAliveStore.portalKey(portal)
+        val cur = IptvFavoritesStore.loadIds(getApplication(), key).toMutableSet()
         if (streamId in cur) cur.remove(streamId) else cur.add(streamId)
         IptvFavoritesStore.saveIds(getApplication(), key, cur)
-        _ui.value = _ui.value.copy(favoriteStreamIds = cur.toSet())
+        val activeKey = _ui.value.activePortal?.let { IptvAliveStore.portalKey(it.portal) }
+        if (activeKey == key) {
+            _ui.value = _ui.value.copy(favoriteStreamIds = cur.toSet())
+        }
     }
+
+    /** Starred portals on the main scraped list (persisted). */
+    fun toggleFavoritePortal(portal: VerifiedPortal) {
+        val k = keyOf(portal)
+        val cur = _ui.value.favoritePortalKeys.toMutableSet()
+        if (k in cur) cur.remove(k) else cur.add(k)
+        IptvFavoritesStore.saveFavoritePortalKeys(getApplication(), cur)
+        _ui.value = _ui.value.copy(favoritePortalKeys = cur.toSet())
+    }
+
+    fun setFavoritePortalsOnly(enabled: Boolean) {
+        _ui.value = _ui.value.copy(favoritePortalsOnly = enabled)
+    }
+
+    /** Whether [portal] is starred on the main list. */
+    fun isFavoritePortal(portal: VerifiedPortal): Boolean =
+        keyOf(portal) in _ui.value.favoritePortalKeys
+
+    fun isFavoriteStream(portal: VerifiedPortal, streamId: String): Boolean =
+        streamId in IptvFavoritesStore.loadIds(getApplication(), IptvAliveStore.portalKey(portal.portal))
 
     // ── Live-only verification ────────────────────────────────────────
 
