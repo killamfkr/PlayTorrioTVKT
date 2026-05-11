@@ -203,3 +203,4 @@ object WatchProgressStore {
         entries.take(MAX_ENTRIES).forEach { arr.put(it.toJson()) }
         AppPreferences.watchProgress = arr.toString()
     }
+}

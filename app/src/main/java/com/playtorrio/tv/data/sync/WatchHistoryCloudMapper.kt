@@ -94,73 +94,84 @@ object WatchHistoryCloudMapper {
     }
 
     /** Best-effort conversion from mobile history row to TV progress (may return null). */
-    fun fromMobileEntry(o: JSONObject): WatchProgress? = try {
-        val uniqueId = o.optString("uniqueId", "")
-        if (uniqueId.isEmpty()) return null
-        val tmdbId = o.optInt("tmdbId", 0)
-        val season = if (o.isNull("season")) null else o.optInt("season").takeIf { it > 0 }
-        val episode = if (o.isNull("episode")) null else o.optInt("episode").takeIf { it > 0 }
-        val mediaType = o.optString("mediaType", "")
-        val isMovie = mediaType == "movie" || (season == null && episode == null && uniqueId.matches(Regex("^\\d+$")))
-        val baseUrl = o.optStringOrNull("stremioAddonBaseUrl")
-        val resolvedAddonId = if (!baseUrl.isNullOrBlank()) {
-            com.playtorrio.tv.data.stremio.StremioAddonRepository.getAddons()
-                .firstOrNull {
-                    com.playtorrio.tv.data.stremio.StremioAddonUrls.normalizeTransportKey(it.transportUrl) ==
-                        com.playtorrio.tv.data.stremio.StremioAddonUrls.normalizeTransportKey(baseUrl)
-                }?.manifest?.id
-        } else null
+    fun fromMobileEntry(o: JSONObject): WatchProgress? {
+        return try {
+            val uniqueId = o.optString("uniqueId", "")
+            if (uniqueId.isEmpty()) {
+                null
+            } else {
+                val tmdbId = o.optInt("tmdbId", 0)
+                val season = if (o.isNull("season")) null else o.optInt("season").takeIf { it > 0 }
+                val episode = if (o.isNull("episode")) null else o.optInt("episode").takeIf { it > 0 }
+                val mediaType = o.optString("mediaType", "")
+                val isMovie =
+                    mediaType == "movie" ||
+                        (season == null && episode == null && uniqueId.matches(Regex("^\\d+$")))
+                val baseUrl = o.optStringOrNull("stremioAddonBaseUrl")
+                val resolvedAddonId = if (!baseUrl.isNullOrBlank()) {
+                    com.playtorrio.tv.data.stremio.StremioAddonRepository.getAddons()
+                        .firstOrNull {
+                            com.playtorrio.tv.data.stremio.StremioAddonUrls.normalizeTransportKey(
+                                it.transportUrl,
+                            ) ==
+                                com.playtorrio.tv.data.stremio.StremioAddonUrls.normalizeTransportKey(baseUrl)
+                        }?.manifest?.id
+                } else {
+                    null
+                }
 
-        val kindResolved = when {
-            o.optString("method", "") == "torrent" -> WatchKind.MAGNET
-            o.optString("method", "") == "stremio_direct" -> WatchKind.ADDON_STREAM
-            tmdbId <= 0 && resolvedAddonId != null -> WatchKind.ADDON_STREAM
-            else -> WatchKind.STREAMING
+                val kindResolved = when {
+                    o.optString("method", "") == "torrent" -> WatchKind.MAGNET
+                    o.optString("method", "") == "stremio_direct" -> WatchKind.ADDON_STREAM
+                    tmdbId <= 0 && resolvedAddonId != null -> WatchKind.ADDON_STREAM
+                    else -> WatchKind.STREAMING
+                }
+
+                val stremioIdVal = o.optStringOrNull("stremioId")
+                val stremioTypeVal = o.optStringOrNull("stremioType")
+
+                val key = WatchProgress.makeKey(
+                    kind = kindResolved,
+                    tmdbId = tmdbId,
+                    isMovie = isMovie,
+                    seasonNumber = season,
+                    episodeNumber = episode,
+                    addonId = resolvedAddonId,
+                    stremioType = stremioTypeVal,
+                    stremioId = stremioIdVal,
+                )
+                WatchProgress(
+                    key = key,
+                    kind = kindResolved,
+                    tmdbId = tmdbId,
+                    imdbId = o.optStringOrNull("imdbId"),
+                    isMovie = isMovie,
+                    title = o.optString("title", ""),
+                    episodeTitle = o.optStringOrNull("episodeTitle"),
+                    seasonNumber = season,
+                    episodeNumber = episode,
+                    posterUrl = o.optStringOrNull("posterPath"),
+                    backdropUrl = null,
+                    logoUrl = null,
+                    year = null,
+                    rating = null,
+                    overview = null,
+                    sourceIndex = parseSourceIndex(o.opt("sourceId")),
+                    magnetUri = o.optStringOrNull("magnetLink"),
+                    fileIdx = if (o.isNull("fileIndex")) null else o.optInt("fileIndex"),
+                    addonId = resolvedAddonId,
+                    stremioType = o.optStringOrNull("stremioType"),
+                    stremioId = o.optStringOrNull("stremioId"),
+                    streamPickKey = o.optStringOrNull("streamUrl") ?: o.optStringOrNull("sourceId"),
+                    streamPickName = null,
+                    positionMs = o.optLong("position", 0L),
+                    durationMs = o.optLong("duration", 0L),
+                    updatedAt = updatedAtMs(o),
+                )
+            }
+        } catch (_: Exception) {
+            null
         }
-
-        val stremioIdVal = o.optStringOrNull("stremioId")
-        val stremioTypeVal = o.optStringOrNull("stremioType")
-
-        val key = WatchProgress.makeKey(
-            kind = kindResolved,
-            tmdbId = tmdbId,
-            isMovie = isMovie,
-            seasonNumber = season,
-            episodeNumber = episode,
-            addonId = resolvedAddonId,
-            stremioType = stremioTypeVal,
-            stremioId = stremioIdVal,
-        )
-        WatchProgress(
-            key = key,
-            kind = kindResolved,
-            tmdbId = tmdbId,
-            imdbId = o.optStringOrNull("imdbId"),
-            isMovie = isMovie,
-            title = o.optString("title", ""),
-            episodeTitle = o.optStringOrNull("episodeTitle"),
-            seasonNumber = season,
-            episodeNumber = episode,
-            posterUrl = o.optStringOrNull("posterPath"),
-            backdropUrl = null,
-            logoUrl = null,
-            year = null,
-            rating = null,
-            overview = null,
-            sourceIndex = parseSourceIndex(o.opt("sourceId")),
-            magnetUri = o.optStringOrNull("magnetLink"),
-            fileIdx = if (o.isNull("fileIndex")) null else o.optInt("fileIndex"),
-            addonId = resolvedAddonId,
-            stremioType = o.optStringOrNull("stremioType"),
-            stremioId = o.optStringOrNull("stremioId"),
-            streamPickKey = o.optStringOrNull("streamUrl") ?: o.optStringOrNull("sourceId"),
-            streamPickName = null,
-            positionMs = o.optLong("position", 0L),
-            durationMs = o.optLong("duration", 0L),
-            updatedAt = updatedAtMs(o),
-        )
-    } catch (_: Exception) {
-        null
     }
 
     private fun parseSourceIndex(v: Any?): Int? = when (v) {
