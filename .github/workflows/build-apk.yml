@@ -1,16 +1,18 @@
-# Builds debug APKs on every branch so you can download installers after each push or PR update.
-# Draft PRs trigger pull_request the same as ready PRs — CI builds automatically when you push.
+# Debug APKs for every push / PR. Requires Android SDK on the runner (Gradle does not bundle it).
+#
+# Manual "Run workflow": GitHub only lists workflow_dispatch workflows that exist on the
+# repository DEFAULT branch. Merge this file to main (or your default branch) to enable the button.
 name: Build APK
 
 on:
-  # All branches (feature branches, integration branches, etc.)
   push:
-    branches:
-      - "**"
   pull_request:
-    branches:
-      - "**"
   workflow_dispatch:
+
+# Token needs write so upload-artifact can attach APKs (many repos default to read-only).
+permissions:
+  contents: read
+  actions: write
 
 concurrency:
   group: build-apk-${{ github.workflow }}-${{ github.ref }}
@@ -31,23 +33,35 @@ jobs:
           java-version: 17
           cache: gradle
 
+      # Without this, Gradle fails: SDK location not found (ANDROID_HOME unset).
+      # App splits APKs by ABI → outputs live under apk/<variant>/<abi>/*.apk
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: >-
+            tools
+            platform-tools
+            platforms;android-36
+            build-tools;35.0.0
+
       - name: Gradle assembleDebug
         run: |
           chmod +x ./gradlew
-          ./gradlew --no-daemon assembleDebug
+          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          ./gradlew --no-daemon --stacktrace assembleDebug
 
-      # Slash-safe label for artifact names (refs like refs/heads/foo/bar → foo-bar)
       - name: Artifact label
         id: label
         run: |
           REF="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          SAFE="$(echo "$REF" | tr '/' '-')"
+          SAFE="$(echo "$REF" | tr '/' '-' | tr -cd 'A-Za-z0-9._-' | cut -c1-80)"
           echo "slug=${SAFE:-branch}" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
           name: playtorrio-debug-${{ steps.label.outputs.slug }}-${{ github.sha }}
-          path: |
-            app/build/outputs/apk/debug/*.apk
+          # ABI splits place APKs under debug/<abi>/
+          path: app/build/outputs/apk/**/*.apk
           if-no-files-found: error
