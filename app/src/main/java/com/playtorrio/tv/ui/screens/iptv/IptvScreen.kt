@@ -1,14 +1,10 @@
-@file:OptIn(ExperimentalFoundationApi::class)
-
 package com.playtorrio.tv.ui.screens.iptv
 
 import android.content.Intent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -48,6 +44,7 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -59,6 +56,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -93,6 +91,9 @@ import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import com.playtorrio.tv.PlayerActivity
 import com.playtorrio.tv.data.iptv.IptvClient
 import com.playtorrio.tv.data.iptv.IptvSection
@@ -162,6 +163,50 @@ private fun labelFor(s: IptvSection?): String = when (s) {
     null -> ""
 }
 
+/**
+ * Android TV: short press Select (center / Enter) → [onShortClick].
+ * Hold Select ~520ms → [onLongHold] when non-null (e.g. toggle favorite).
+ */
+@Composable
+private fun Modifier.tvSelectShortOrLong(
+    enabled: Boolean = true,
+    onShortClick: () -> Unit,
+    onLongHold: (() -> Unit)?,
+): Modifier {
+    val scope = rememberCoroutineScope()
+    var holdJob by remember { mutableStateOf<Job?>(null) }
+    var longDispatched by remember { mutableStateOf(false) }
+    return this.onPreviewKeyEvent { e ->
+        if (!enabled) return@onPreviewKeyEvent false
+        val select =
+            e.key == Key.DirectionCenter || e.key == Key.Enter || e.key == Key.NumPadEnter
+        if (!select) return@onPreviewKeyEvent false
+        when (e.type) {
+            KeyEventType.KeyDown -> {
+                longDispatched = false
+                holdJob?.cancel()
+                if (onLongHold != null) {
+                    holdJob = scope.launch {
+                        delay(520)
+                        longDispatched = true
+                        onLongHold()
+                    }
+                }
+                true
+            }
+
+            KeyEventType.KeyUp -> {
+                holdJob?.cancel()
+                holdJob = null
+                if (!longDispatched) onShortClick()
+                true
+            }
+
+            else -> false
+        }
+    }
+}
+
 // ───────────────────────────────────────────────────────────────────────
 // Root
 // ───────────────────────────────────────────────────────────────────────
@@ -192,6 +237,7 @@ fun IptvScreen(navController: NavController) {
                 IptvView.EPISODE_LIST -> EpisodeListView(state, vm)
                 IptvView.CHANNELS_HUB -> ChannelsHubView(state, vm)
                 IptvView.CHANNEL_RESULTS -> ChannelResultsView(state, vm)
+                IptvView.FAVORITE_CHANNELS_TAB -> FavoriteChannelsTabView(state, vm)
             }
         }
     }
@@ -240,6 +286,12 @@ private fun PortalListView(state: IptvUiState, vm: IptvViewModel, onBack: () -> 
                 icon = Icons.Filled.Add,
                 selected = false,
                 onClick = { vm.openAddDialog() },
+            )
+            Spacer(Modifier.width(10.dp))
+            IconPill(
+                icon = Icons.Filled.Favorite,
+                selected = false,
+                onClick = { vm.openFavoriteChannelsTab() },
             )
             Spacer(Modifier.width(10.dp))
             // Channels hub (hardcoded sports channels across portals)
@@ -292,7 +344,7 @@ private fun PortalListView(state: IptvUiState, vm: IptvViewModel, onBack: () -> 
                 EmptyState(
                     icon = Icons.Filled.LiveTv,
                     title = "No favorite portals",
-                    hint = "Long-press a portal to star it, or turn off Favorites only",
+                    hint = "Hold Select on a portal to star it, or turn off Favorites only",
                 )
             } else {
             LazyVerticalGrid(
@@ -403,7 +455,7 @@ private fun EditModeBar(
         )
         Spacer(Modifier.width(12.dp))
         Text(
-            if (count == 0) "Select portals to delete"
+            if (count == 0) "Select portals to delete (starred lists are protected)"
             else "$count selected",
             color = Color.White.copy(alpha = 0.85f),
             fontSize = 13.sp,
@@ -862,9 +914,9 @@ private fun PortalCard(
             .scale(scale)
             .onFocusChanged { focused = it.isFocused }
             .focusable()
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = if (!editMode) onLongClick else null,
+            .tvSelectShortOrLong(
+                onShortClick = onClick,
+                onLongHold = if (!editMode) onLongClick else null,
             )
     ) {
         Box(
@@ -1411,7 +1463,7 @@ private fun BrowserView(state: IptvUiState, vm: IptvViewModel) {
         )
         if (section == IptvSection.LIVE) {
             Text(
-                "Hold Select on a channel to favorite it (short press plays). Long-press a portal card to star it.",
+                "Hold Select (center) on a channel to favorite · short press plays. Starred portals can't be deleted in Edit mode.",
                 color = TextDim2,
                 fontSize = 11.sp,
                 modifier = Modifier.padding(top = 6.dp, start = 4.dp),
@@ -1712,6 +1764,8 @@ private fun LiveChannelRow(
     accent: Color,
     isFavorite: Boolean = false,
     onToggleFavorite: () -> Unit = {},
+    portalLabel: String? = null,
+    guideLine: String? = null,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
@@ -1721,9 +1775,9 @@ private fun LiveChannelRow(
             .fillMaxWidth()
             .onFocusChanged { focused = it.isFocused }
             .focusable()
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onToggleFavorite,
+            .tvSelectShortOrLong(
+                onShortClick = onClick,
+                onLongHold = onToggleFavorite,
             )
     ) {
         Row(
@@ -1770,15 +1824,34 @@ private fun LiveChannelRow(
                 }
             }
             Spacer(Modifier.width(14.dp))
-            Text(
-                s.name,
-                color = Color.White,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
+            Column(Modifier.weight(1f)) {
+                if (!portalLabel.isNullOrBlank()) {
+                    Text(
+                        portalLabel,
+                        color = TextDim2,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(
+                    s.name,
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (!guideLine.isNullOrBlank()) {
+                    Text(
+                        guideLine,
+                        color = TextDim,
+                        fontSize = 11.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
             Icon(
                 imageVector = if (isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
                 contentDescription = if (isFavorite) "Favorite" else "Not favorite",
@@ -2091,6 +2164,104 @@ private fun EmptyState(icon: ImageVector, title: String, hint: String) {
             }
         }
     }
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// Favorite channels tab (all portals, optional EPG)
+// ───────────────────────────────────────────────────────────────────────
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun FavoriteChannelsTabView(state: IptvUiState, vm: IptvViewModel) {
+    val ctx = LocalContext.current
+    val accent = LiveGrad.first()
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(horizontal = 40.dp, vertical = 32.dp)
+    ) {
+        SectionHeader(
+            title = "Favorite channels",
+            subtitle = if (state.favoriteChannelsLoading) {
+                "Loading…"
+            } else {
+                "${state.favoriteChannelsRows.size} channels from saved portals"
+            },
+            gradient = LiveGrad,
+            icon = Icons.Filled.Favorite,
+            onBack = { vm.back() },
+        )
+        Text(
+            "Hold Select to remove from favorites · Short press plays · Guide text loads when the provider exposes EPG.",
+            color = TextDim2,
+            fontSize = 11.sp,
+            modifier = Modifier.padding(top = 8.dp, start = 4.dp),
+        )
+        Spacer(Modifier.height(16.dp))
+        when {
+            state.favoriteChannelsLoading -> CenterSpinner()
+            state.favoriteChannelsError != null -> EmptyState(
+                Icons.Filled.Favorite,
+                "Favorite channels",
+                state.favoriteChannelsError!!,
+            )
+
+            state.favoriteChannelsRows.isEmpty() -> EmptyState(
+                Icons.Filled.Favorite,
+                "No favorite channels",
+                "Star channels from Live TV (hold Select), then open this tab.",
+            )
+
+            else -> LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                itemsIndexed(
+                    state.favoriteChannelsRows,
+                    key = { _, e -> portalKey(e.portal) + "|" + e.stream.streamId },
+                ) { idx, entry ->
+                    FavoriteChannelAggregatedRow(
+                        index = idx + 1,
+                        entry = entry,
+                        vm = vm,
+                        accent = accent,
+                        onPlay = {
+                            val url = IptvClient.streamUrl(entry.portal.portal, entry.stream)
+                            launchPlayer(ctx, url, entry.stream.name)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FavoriteChannelAggregatedRow(
+    index: Int,
+    entry: FavoriteChannelEntry,
+    vm: IptvViewModel,
+    accent: Color,
+    onPlay: () -> Unit,
+) {
+    var guide by remember(entry.portal.portal.url, entry.stream.streamId) {
+        mutableStateOf<String?>(null)
+    }
+    LaunchedEffect(entry.portal.portal.url, entry.stream.streamId) {
+        guide = runCatching {
+            vm.loadEpgSubtitle(entry.portal.portal, entry.stream.streamId)
+        }.getOrDefault("")
+    }
+    LiveChannelRow(
+        s = entry.stream,
+        number = index,
+        accent = accent,
+        isFavorite = true,
+        onToggleFavorite = { vm.toggleFavoriteStream(entry.portal, entry.stream.streamId) },
+        portalLabel = entry.portal.name.ifBlank { entry.portal.portal.url },
+        guideLine = guide?.takeIf { it.isNotBlank() },
+        onClick = onPlay,
+    )
 }
 
 // ───────────────────────────────────────────────────────────────────────

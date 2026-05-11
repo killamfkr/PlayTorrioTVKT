@@ -39,6 +39,14 @@ data class IptvStream(
 
 enum class IptvSection { LIVE, VOD, SERIES }
 
+/** One programme row from Xtream `get_short_epg`. */
+data class IptvEpgListing(
+    val title: String,
+    val description: String,
+    val startMillis: Long,
+    val endMillis: Long,
+)
+
 data class IptvEpisode(
     val id: String,
     val title: String,
