@@ -1,12 +1,15 @@
-# Builds installable APKs in CI (debug — signed with the default debug keystore).
-# Release builds need app/release.jks (gitignored); build those locally or add keystore secrets.
+# Builds debug APKs on every branch so you can download installers after each push or PR update.
+# Draft PRs trigger pull_request the same as ready PRs — CI builds automatically when you push.
 name: Build APK
 
 on:
+  # All branches (feature branches, integration branches, etc.)
   push:
-    branches: [main]
+    branches:
+      - "**"
   pull_request:
-    branches: [main]
+    branches:
+      - "**"
   workflow_dispatch:
 
 concurrency:
@@ -33,10 +36,18 @@ jobs:
           chmod +x ./gradlew
           ./gradlew --no-daemon assembleDebug
 
+      # Slash-safe label for artifact names (refs like refs/heads/foo/bar → foo-bar)
+      - name: Artifact label
+        id: label
+        run: |
+          REF="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          SAFE="$(echo "$REF" | tr '/' '-')"
+          echo "slug=${SAFE:-branch}" >> "$GITHUB_OUTPUT"
+
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: playtorrio-debug-apks
+          name: playtorrio-debug-${{ steps.label.outputs.slug }}-${{ github.sha }}
           path: |
             app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
