@@ -11,6 +11,7 @@ import com.playtorrio.tv.data.iptv.IptvScraper
 import com.playtorrio.tv.data.iptv.IptvSection
 import com.playtorrio.tv.data.iptv.IptvStore
 import com.playtorrio.tv.data.iptv.IptvStream
+import com.playtorrio.tv.data.iptv.IptvEpgListing
 import com.playtorrio.tv.data.iptv.IptvVerifier
 import com.playtorrio.tv.data.iptv.VerifiedPortal
 import com.playtorrio.tv.data.iptv.IptvAliveChecker
@@ -26,8 +27,12 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Where in the IPTV flow the user currently is.
@@ -43,6 +48,7 @@ enum class IptvView {
     EPISODE_LIST,
     CHANNELS_HUB,
     CHANNEL_RESULTS,
+    FAVORITE_CHANNELS_TAB,
 }
 
 /** Sentinel id for favorite live channels (sidebar). */
@@ -111,6 +117,11 @@ data class IptvUiState(
     val channelStatus: String = "",
     val channelIsRunning: Boolean = false,
     val channelResults: List<ChannelHit> = emptyList(),
+
+    /** All favorite live channels across saved portals (Favorite channels tab). */
+    val favoriteChannelsRows: List<FavoriteChannelEntry> = emptyList(),
+    val favoriteChannelsLoading: Boolean = false,
+    val favoriteChannelsError: String? = null,
 )
 
 /** A single alive stream found while resolving a HardcodedChannel. */
@@ -118,6 +129,12 @@ data class ChannelHit(
     val portal: VerifiedPortal,
     val stream: IptvStream,
     val streamUrl: String,
+)
+
+/** One saved favorite channel entry for the cross-portal favorites tab. */
+data class FavoriteChannelEntry(
+    val portal: VerifiedPortal,
+    val stream: IptvStream,
 )
 
 class IptvViewModel(app: Application) : AndroidViewModel(app) {
@@ -129,6 +146,7 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
     private var browseJob: Job? = null
     private var aliveJob: Job? = null
     private var channelJob: Job? = null
+    private var favoriteChannelsJob: Job? = null
 
     private var scrapedAll: List<IptvPortal> = emptyList()
     private val attempted = mutableSetOf<String>()
@@ -312,11 +330,28 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteSelected() {
         val s = _ui.value
         if (s.selected.isEmpty()) return
-        val remaining = s.verified.filterNot { keyOf(it) in s.selected }
+        val toRemove = s.selected - s.favoritePortalKeys
+        if (toRemove.isEmpty()) {
+            _ui.value = s.copy(
+                statusText = "Starred lists can't be deleted. Un-star those portals first.",
+            )
+            return
+        }
+        val remaining = s.verified.filterNot { keyOf(it) in toRemove }
+        val skipped = s.selected.size - toRemove.size
+        val statusMsg = buildString {
+            append("Removed ")
+            append(toRemove.size)
+            append(" portal")
+            if (toRemove.size != 1) append("s")
+            if (skipped > 0) append(" · kept $skipped starred")
+            append(".")
+        }
         _ui.value = s.copy(
             verified = remaining,
             selected = emptySet(),
             editMode = false,
+            statusText = statusMsg,
         )
         IptvStore.save(getApplication(), remaining)
     }
@@ -481,14 +516,30 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun setFavoriteStreamForPortal(portal: IptvPortal, streamId: String) {
-        val key = IptvAliveStore.portalKey(portal)
-        val cur = IptvFavoritesStore.loadIds(getApplication(), key).toMutableSet()
+        val storeKey = IptvAliveStore.portalKey(portal)
+        val cur = IptvFavoritesStore.loadIds(getApplication(), storeKey).toMutableSet()
         if (streamId in cur) cur.remove(streamId) else cur.add(streamId)
-        IptvFavoritesStore.saveIds(getApplication(), key, cur)
-        val activeKey = _ui.value.activePortal?.let { IptvAliveStore.portalKey(it.portal) }
-        if (activeKey == key) {
-            _ui.value = _ui.value.copy(favoriteStreamIds = cur.toSet())
+        IptvFavoritesStore.saveIds(getApplication(), storeKey, cur)
+        var next = _ui.value
+        val activeKey = next.activePortal?.let { IptvAliveStore.portalKey(it.portal) }
+        if (activeKey == storeKey) {
+            next = next.copy(favoriteStreamIds = cur.toSet())
         }
+        if (next.view == IptvView.FAVORITE_CHANNELS_TAB) {
+            val rows = next.favoriteChannelsRows.filterNot {
+                IptvAliveStore.portalKey(it.portal.portal) == storeKey &&
+                    it.stream.streamId == streamId
+            }
+            next = next.copy(
+                favoriteChannelsRows = rows,
+                favoriteChannelsError = if (rows.isEmpty()) {
+                    "No favorite channels yet. Hold Select on a channel in Live TV to add one."
+                } else {
+                    null
+                },
+            )
+        }
+        _ui.value = next
     }
 
     /** Starred portals on the main scraped list (persisted). */
@@ -577,6 +628,77 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
             channelStatus = "",
             channelIsRunning = false,
         )
+    }
+
+    fun openFavoriteChannelsTab() {
+        favoriteChannelsJob?.cancel()
+        favoriteChannelsJob = viewModelScope.launch {
+            _ui.value = _ui.value.copy(
+                view = IptvView.FAVORITE_CHANNELS_TAB,
+                favoriteChannelsLoading = true,
+                favoriteChannelsError = null,
+                favoriteChannelsRows = emptyList(),
+            )
+            val ctx = getApplication<Application>()
+            val rows = mutableListOf<FavoriteChannelEntry>()
+            val verified = _ui.value.verified
+            for (vp in verified) {
+                val pk = IptvAliveStore.portalKey(vp.portal)
+                val favIds = IptvFavoritesStore.loadIds(ctx, pk)
+                if (favIds.isEmpty()) continue
+                val streams = withContext(Dispatchers.IO) {
+                    IptvClient.streams(vp.portal, IptvSection.LIVE, "")
+                }
+                val byId = streams.associateBy { it.streamId }
+                for (id in favIds) {
+                    val st = byId[id] ?: IptvStream(
+                        streamId = id,
+                        name = "Channel $id",
+                        icon = "",
+                        categoryId = "",
+                        containerExt = "ts",
+                        kind = "live",
+                    )
+                    rows += FavoriteChannelEntry(vp, st)
+                }
+            }
+            rows.sortWith(
+                compareBy<FavoriteChannelEntry> { it.portal.name.lowercase() }
+                    .thenBy { it.stream.name.lowercase() },
+            )
+            if (!isActive) return@launch
+            _ui.value = _ui.value.copy(
+                favoriteChannelsLoading = false,
+                favoriteChannelsRows = rows,
+                favoriteChannelsError = if (rows.isEmpty()) {
+                    "No favorite channels yet. Hold Select on a channel in Live TV to add one."
+                } else {
+                    null
+                },
+            )
+        }
+    }
+
+    suspend fun loadEpgSubtitle(portal: IptvPortal, streamId: String): String =
+        withContext(Dispatchers.IO) {
+            val listings = IptvClient.shortEpg(portal, streamId, 8)
+            formatEpgLine(listings)
+        }
+
+    private fun formatEpgLine(listings: List<IptvEpgListing>): String {
+        if (listings.isEmpty()) return ""
+        val now = System.currentTimeMillis()
+        val cur = listings.firstOrNull { listing ->
+            listing.endMillis > listing.startMillis &&
+                now >= listing.startMillis && now < listing.endMillis
+        } ?: listings.first()
+        val tf = SimpleDateFormat("HH:mm", Locale.getDefault())
+        val time = when {
+            cur.startMillis > 0 && cur.endMillis > cur.startMillis ->
+                "${tf.format(Date(cur.startMillis))}–${tf.format(Date(cur.endMillis))}"
+            else -> ""
+        }
+        return if (time.isNotEmpty()) "${cur.title} · $time" else cur.title
     }
 
     fun stopChannelSearch() {
@@ -1001,6 +1123,17 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
                     channelResults = emptyList(),
                     channelStatus = "",
                     channelIsRunning = false,
+                )
+                true
+            }
+            IptvView.FAVORITE_CHANNELS_TAB -> {
+                favoriteChannelsJob?.cancel()
+                favoriteChannelsJob = null
+                _ui.value = s.copy(
+                    view = IptvView.PORTAL_LIST,
+                    favoriteChannelsRows = emptyList(),
+                    favoriteChannelsLoading = false,
+                    favoriteChannelsError = null,
                 )
                 true
             }

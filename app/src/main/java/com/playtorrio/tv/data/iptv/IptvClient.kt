@@ -153,6 +153,44 @@ object IptvClient {
     fun episodeUrl(p: IptvPortal, e: IptvEpisode): String =
         "${p.url}/series/${enc(p.username)}/${enc(p.password)}/${e.id}.${e.containerExt}"
 
+    /**
+     * Xtream short EPG for a live [streamId]. Empty if the server has no guide or the request fails.
+     */
+    fun shortEpg(p: IptvPortal, streamId: String, limit: Int = 4): List<IptvEpgListing> {
+        val url = "${p.url}/player_api.php?username=${enc(p.username)}&password=${enc(p.password)}" +
+            "&action=get_short_epg&stream_id=${enc(streamId)}&limit=$limit"
+        val text = httpGet(url, 8000) ?: return emptyList()
+        return runCatching {
+            val root = JSONObject(text)
+            val arr = root.optJSONArray("epg_listings") ?: return emptyList()
+            val out = ArrayList<IptvEpgListing>(arr.length().coerceAtMost(limit))
+            for (i in 0 until arr.length().coerceAtMost(limit)) {
+                val o = arr.optJSONObject(i) ?: continue
+                val title = o.optString("title").ifBlank { o.optString("lang") }.ifBlank { "Programme" }
+                val desc = o.optString("description").ifBlank { o.optString("desc") }
+                val startMs = o.optLong("start_timestamp", 0L).takeIf { it > 0 }?.times(1000)
+                    ?: parseXtreamTime(o.optString("start"))
+                val endMs = o.optLong("stop_timestamp", 0L).takeIf { it > 0 }?.times(1000)
+                    ?: o.optLong("end_timestamp", 0L).takeIf { it > 0 }?.times(1000)
+                    ?: parseXtreamTime(o.optString("end"))
+                out += IptvEpgListing(
+                    title = title,
+                    description = desc,
+                    startMillis = startMs,
+                    endMillis = endMs,
+                )
+            }
+            out
+        }.getOrElse { emptyList() }
+    }
+
+    private fun parseXtreamTime(raw: String): Long {
+        if (raw.isBlank()) return 0L
+        return runCatching {
+            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.UK).parse(raw)?.time ?: 0L
+        }.getOrDefault(0L)
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────
 
     private fun httpGet(url: String, timeoutMs: Long): String? {
