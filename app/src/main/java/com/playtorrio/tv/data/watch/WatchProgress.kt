@@ -193,8 +193,13 @@ object WatchProgressStore {
     }
 
     fun remove(key: String): List<WatchProgress> {
-        val list = load().filterNot { it.key == key }
-        persist(list)
-        return list
+        val merged = load().filterNot { it.key == key }
+        persist(merged)
+        return merged
     }
-}
+
+    fun replaceAll(entries: List<WatchProgress>) {
+        val arr = JSONArray()
+        entries.take(MAX_ENTRIES).forEach { arr.put(it.toJson()) }
+        AppPreferences.watchProgress = arr.toString()
+    }
