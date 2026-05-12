@@ -34,14 +34,48 @@ object AppPreferences {
     private const val KEY_SUPABASE_REFRESH_TOKEN = "supabase_refresh_token"
     private const val KEY_SUPABASE_USER_ID = "supabase_user_id"
     private const val KEY_SUPABASE_EMAIL = "supabase_email"
+    /** One library file for all devices (matches PlayTorrio mobile account sync). */
+    private const val KEY_MIGRATED_SINGLE_LIBRARY = "_migrated_single_library_prefs_v1"
 
     private lateinit var prefs: SharedPreferences
 
     fun init(context: Context) {
-        val activeId = com.playtorrio.tv.data.profile.ProfileManager.activeId()
-        val fileName = if (activeId == "default") PREFS_BASE else "${PREFS_BASE}_$activeId"
-        prefs = context.getSharedPreferences(fileName, Context.MODE_PRIVATE)
+        prefs = context.getSharedPreferences(PREFS_BASE, Context.MODE_PRIVATE)
+        migrateLegacyProfilePrefs(context)
         com.playtorrio.tv.data.stremio.StremioAddonRepository.init(context)
+    }
+
+    private fun migrateLegacyProfilePrefs(context: Context) {
+        if (prefs.getBoolean(KEY_MIGRATED_SINGLE_LIBRARY, false)) return
+        val activeId = try {
+            com.playtorrio.tv.data.profile.ProfileManager.activeId()
+        } catch (_: Exception) {
+            "default"
+        }
+        val legacyName = if (activeId == "default") PREFS_BASE else "${PREFS_BASE}_$activeId"
+        if (legacyName != PREFS_BASE) {
+            val legacy = context.getSharedPreferences(legacyName, Context.MODE_PRIVATE)
+            if (legacy.all.isNotEmpty()) {
+                val ed = prefs.edit()
+                copySharedPreferencesInto(legacy, ed)
+                ed.apply()
+            }
+        }
+        prefs.edit().putBoolean(KEY_MIGRATED_SINGLE_LIBRARY, true).apply()
+    }
+
+    private fun copySharedPreferencesInto(from: SharedPreferences, to: SharedPreferences.Editor) {
+        for ((k, v) in from.all) {
+            when (v) {
+                is String -> to.putString(k, v)
+                is Boolean -> to.putBoolean(k, v)
+                is Int -> to.putInt(k, v)
+                is Long -> to.putLong(k, v)
+                is Float -> to.putFloat(k, v)
+                is Set<*> -> @Suppress("UNCHECKED_CAST") to.putStringSet(k, v as Set<String>)
+                null -> {}
+            }
+        }
     }
 
     var streamingMode: Boolean

@@ -60,15 +60,6 @@ PlayTorrio TV finds movies and shows from a stack of online sources, plays them 
 - Full DPAD focus handling, no dead ends
 - Works on cheap Android TV boxes, sticks, and proper TVs
 
-### In-app updater
-- Checks GitHub releases on launch
-- Picks the right APK for your device's CPU automatically
-- Update popup steals focus so you can't miss it
-- Two-button choice: Update Now or Later
-- Downloads and installs without leaving the app
-
----
-
 ## Install
 
 1. Download the latest APK from [Releases](https://github.com/ayman708-UX/PlayTorrioTVKT/releases)
@@ -77,9 +68,7 @@ PlayTorrio TV finds movies and shows from a stack of online sources, plays them 
    - `app-armeabi-v7a-release.apk` — older / cheaper boxes
 3. Sideload it (Downloader app, USB, or however you usually do it)
 4. Allow installs from unknown sources when prompted
-5. Open and pick a profile
-
-After the first install, the app updates itself.
+5. Open the app
 
 ---
 
