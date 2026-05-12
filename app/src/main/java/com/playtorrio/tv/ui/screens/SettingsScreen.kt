@@ -244,6 +244,7 @@ fun SettingsScreen(navController: NavController) {
                 mutableStateOf(AppPreferences.streamingMode)
             }
             var torrentPreset by remember { mutableStateOf(AppPreferences.torrentPreset) }
+            var torrentAutoPicker by remember { mutableStateOf(AppPreferences.torrentAutoPickerMode) }
             var torrentCacheMb by remember { mutableStateOf(AppPreferences.torrentCacheSizeMb) }
             var torrentPreload by remember { mutableStateOf(AppPreferences.torrentPreloadPercent) }
             var torrentReadAhead by remember { mutableStateOf(AppPreferences.torrentReadAheadPercent) }
@@ -641,6 +642,23 @@ fun SettingsScreen(navController: NavController) {
                     letterSpacing = 1.5.sp
                 ),
                 color = Color.White.copy(alpha = 0.4f)
+            )
+
+            Spacer(Modifier.height(12.dp))
+
+            SettingsChoiceRow(
+                title = "Torrent auto-pick",
+                description = "When you open Torrents from a movie or episode: skip the list and start the best match from PlayTorrio search or the first torrent stream from add-ons (order follows Default stream source).",
+                options = listOf(
+                    AppPreferences.TORRENT_AUTO_PICK_MANUAL to "Manual (show list)",
+                    AppPreferences.TORRENT_AUTO_PICK_PLAYTORRIO to "Auto: PlayTorrio",
+                    AppPreferences.TORRENT_AUTO_PICK_ADDON to "Auto: Add-on torrents",
+                ),
+                selectedValue = torrentAutoPicker,
+                onSelected = { key ->
+                    torrentAutoPicker = key
+                    AppPreferences.torrentAutoPickerMode = key
+                },
             )
 
             Spacer(Modifier.height(12.dp))

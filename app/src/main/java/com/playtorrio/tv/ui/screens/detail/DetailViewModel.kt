@@ -3,11 +3,13 @@ package com.playtorrio.tv.ui.screens.detail
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.playtorrio.tv.data.AppPreferences
 import com.playtorrio.tv.data.api.TmdbClient
 import com.playtorrio.tv.data.model.*
 import com.playtorrio.tv.data.stremio.StremioAddonRepository
 import com.playtorrio.tv.data.stremio.StremioService
 import com.playtorrio.tv.data.stremio.StremioStream
+import com.playtorrio.tv.data.stremio.StreamRoute
 import com.playtorrio.tv.data.torrent.TorrentResult
 import com.playtorrio.tv.data.torrent.TorrentSearchRequest
 import com.playtorrio.tv.data.torrent.TorrentSearchService
@@ -18,6 +20,12 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+
+/** One-shot: auto-picked torrent should start [com.playtorrio.tv.PlayerActivity]. */
+sealed class PendingTorrentPlay {
+    data class BuiltIn(val torrent: TorrentResult) : PendingTorrentPlay()
+    data class Addon(val stream: StremioStream, val route: StreamRoute.Torrent) : PendingTorrentPlay()
+}
 
 data class DetailUiState(
     val isLoading: Boolean = true,
@@ -75,6 +83,7 @@ data class DetailUiState(
     val imdbId: String? = null,
     val stremioStreams: List<StremioStream> = emptyList(),
     val isLoadingStremioStreams: Boolean = false,
+    val pendingTorrentPlay: PendingTorrentPlay? = null,
     // Trailer
     val trailerSource: TrailerPlaybackSource? = null,
     val isTrailerPlaying: Boolean = false,
@@ -345,26 +354,33 @@ class DetailViewModel : ViewModel() {
             torrentEpisodeNumber = null,
             torrentEpisodeTitle = null,
             stremioStreams = emptyList(),
-            isLoadingStremioStreams = true
+            isLoadingStremioStreams = true,
         )
-        loadStremioStreamsForMovie()
         viewModelScope.launch {
-            try {
-                val results = TorrentSearchService.search(
-                    TorrentSearchRequest(
-                        title = state.title,
-                        year = state.year,
-                        isMovie = true
+            val stJob = async { fetchStremioStreamsForMovie() }
+            val torJob = async {
+                try {
+                    TorrentSearchService.search(
+                        TorrentSearchRequest(
+                            title = state.title,
+                            year = state.year,
+                            isMovie = true,
+                        ),
                     )
-                )
-                _uiState.value = _uiState.value.copy(
-                    torrentResults = results,
-                    isLoadingTorrents = false
-                )
-            } catch (e: Exception) {
-                Log.e("DetailViewModel", "Torrent search failed", e)
-                _uiState.value = _uiState.value.copy(isLoadingTorrents = false)
+                } catch (e: Exception) {
+                    Log.e("DetailViewModel", "Torrent search failed", e)
+                    emptyList()
+                }
             }
+            val streams = stJob.await()
+            val results = torJob.await()
+            _uiState.value = _uiState.value.copy(
+                torrentResults = results,
+                isLoadingTorrents = false,
+                stremioStreams = streams,
+                isLoadingStremioStreams = false,
+            )
+            applyTorrentAutoPickIfNeeded()
         }
     }
 
@@ -382,69 +398,116 @@ class DetailViewModel : ViewModel() {
             torrentEpisodeNumber = eNum,
             torrentEpisodeTitle = episode.name,
             stremioStreams = emptyList(),
-            isLoadingStremioStreams = true
+            isLoadingStremioStreams = true,
         )
-        loadStremioStreamsForEpisode(sNum, eNum)
         viewModelScope.launch {
-            try {
-                val results = TorrentSearchService.search(
-                    TorrentSearchRequest(
-                        title = state.title,
-                        seasonNumber = sNum,
-                        episodeNumber = eNum,
-                        isMovie = false
+            val stJob = async { fetchStremioStreamsForEpisode(sNum, eNum) }
+            val torJob = async {
+                try {
+                    TorrentSearchService.search(
+                        TorrentSearchRequest(
+                            title = state.title,
+                            seasonNumber = sNum,
+                            episodeNumber = eNum,
+                            isMovie = false,
+                        ),
                     )
-                )
-                _uiState.value = _uiState.value.copy(
-                    torrentResults = results,
-                    isLoadingTorrents = false
-                )
-            } catch (e: Exception) {
-                Log.e("DetailViewModel", "Torrent search failed", e)
-                _uiState.value = _uiState.value.copy(isLoadingTorrents = false)
+                } catch (e: Exception) {
+                    Log.e("DetailViewModel", "Torrent search failed", e)
+                    emptyList()
+                }
             }
+            val streams = stJob.await()
+            val results = torJob.await()
+            _uiState.value = _uiState.value.copy(
+                torrentResults = results,
+                isLoadingTorrents = false,
+                stremioStreams = streams,
+                isLoadingStremioStreams = false,
+            )
+            applyTorrentAutoPickIfNeeded()
         }
     }
 
-    private fun loadStremioStreamsForMovie() {
-        viewModelScope.launch {
-            try {
-                val imdbId = ensureImdbId() ?: run {
-                    _uiState.value = _uiState.value.copy(isLoadingStremioStreams = false)
-                    return@launch
-                }
-                val addons = StremioAddonRepository.getAddons()
-                val streams = StremioService.getStreams(addons, "movie", imdbId)
-                _uiState.value = _uiState.value.copy(
-                    stremioStreams = streams,
-                    isLoadingStremioStreams = false
-                )
-            } catch (e: Exception) {
-                Log.e("DetailViewModel", "Stremio movie streams failed", e)
-                _uiState.value = _uiState.value.copy(isLoadingStremioStreams = false)
-            }
+    private suspend fun fetchStremioStreamsForMovie(): List<StremioStream> {
+        val imdbId = ensureImdbId() ?: return emptyList()
+        return try {
+            val addons = StremioAddonRepository.getAddons()
+            StremioService.getStreams(addons, "movie", imdbId)
+        } catch (e: Exception) {
+            Log.e("DetailViewModel", "Stremio movie streams failed", e)
+            emptyList()
         }
     }
 
-    private fun loadStremioStreamsForEpisode(season: Int, episode: Int) {
-        viewModelScope.launch {
-            try {
-                val imdbId = ensureImdbId() ?: run {
-                    _uiState.value = _uiState.value.copy(isLoadingStremioStreams = false)
-                    return@launch
-                }
-                val videoId = "$imdbId:$season:$episode"
-                val addons = StremioAddonRepository.getAddons()
-                val streams = StremioService.getStreams(addons, "series", videoId)
-                _uiState.value = _uiState.value.copy(
-                    stremioStreams = streams,
-                    isLoadingStremioStreams = false
-                )
-            } catch (e: Exception) {
-                Log.e("DetailViewModel", "Stremio episode streams failed", e)
-                _uiState.value = _uiState.value.copy(isLoadingStremioStreams = false)
-            }
+    private suspend fun fetchStremioStreamsForEpisode(season: Int, episode: Int): List<StremioStream> {
+        val imdbId = ensureImdbId() ?: return emptyList()
+        val videoId = "$imdbId:$season:$episode"
+        return try {
+            val addons = StremioAddonRepository.getAddons()
+            StremioService.getStreams(addons, "series", videoId)
+        } catch (e: Exception) {
+            Log.e("DetailViewModel", "Stremio episode streams failed", e)
+            emptyList()
         }
+    }
+
+    private fun applyTorrentAutoPickIfNeeded() {
+        val mode = AppPreferences.torrentAutoPickerMode
+        if (mode == AppPreferences.TORRENT_AUTO_PICK_MANUAL) return
+        val s = _uiState.value
+        if (s.isLoadingTorrents || s.isLoadingStremioStreams) return
+
+        when (mode) {
+            AppPreferences.TORRENT_AUTO_PICK_PLAYTORRIO -> {
+                val best = pickBestPlayTorrioTorrent(s) ?: return
+                _uiState.value = s.copy(
+                    showTorrentOverlay = false,
+                    pendingTorrentPlay = PendingTorrentPlay.BuiltIn(best),
+                    torrentResults = emptyList(),
+                    stremioStreams = emptyList(),
+                    isLoadingTorrents = false,
+                    isLoadingStremioStreams = false,
+                )
+            }
+            AppPreferences.TORRENT_AUTO_PICK_ADDON -> {
+                val picked = pickFirstAddonTorrent(s) ?: return
+                _uiState.value = s.copy(
+                    showTorrentOverlay = false,
+                    pendingTorrentPlay = PendingTorrentPlay.Addon(picked.first, picked.second),
+                    torrentResults = emptyList(),
+                    stremioStreams = emptyList(),
+                    isLoadingTorrents = false,
+                    isLoadingStremioStreams = false,
+                )
+            }
+            else -> {}
+        }
+    }
+
+    private fun pickBestPlayTorrioTorrent(s: DetailUiState): TorrentResult? {
+        val list = s.torrentResults
+        if (list.isEmpty()) return null
+        return if (s.torrentEpisodeNumber != null) {
+            list.sortedWith(
+                compareByDescending<TorrentResult> { it.seeders }
+                    .thenBy { it.isSeasonPack },
+            ).firstOrNull()
+        } else {
+            list.maxByOrNull { it.seeders }
+        }
+    }
+
+    private fun pickFirstAddonTorrent(s: DetailUiState): Pair<StremioStream, StreamRoute.Torrent>? {
+        for (stream in s.stremioStreams) {
+            val route = StremioService.routeStream(stream)
+            if (route is StreamRoute.Torrent) return stream to route
+        }
+        return null
+    }
+
+    fun consumePendingTorrentPlay() {
+        _uiState.value = _uiState.value.copy(pendingTorrentPlay = null)
     }
 
     private suspend fun ensureImdbId(): String? {
@@ -464,10 +527,12 @@ class DetailViewModel : ViewModel() {
     fun dismissTorrentOverlay() {
         _uiState.value = _uiState.value.copy(
             showTorrentOverlay = false,
+            pendingTorrentPlay = null,
             torrentResults = emptyList(),
             torrentSearchLabel = "",
             stremioStreams = emptyList(),
-            isLoadingStremioStreams = false
+            isLoadingTorrents = false,
+            isLoadingStremioStreams = false,
         )
     }
 

@@ -21,6 +21,14 @@ object AppPreferences {
     private const val KEY_TORRENT_RESPONSIVE = "torrent_responsive"
     private const val KEY_TORRENT_DISABLE_UPLOAD = "torrent_disable_upload"
     private const val KEY_TORRENT_DISABLE_IPV6 = "torrent_disable_ipv6"
+    private const val KEY_TORRENT_AUTO_PICK = "torrent_auto_picker_mode"
+
+    /** Manual torrent list (default). */
+    const val TORRENT_AUTO_PICK_MANUAL = "manual"
+    /** Pick best result from built-in PlayTorrio torrent search. */
+    const val TORRENT_AUTO_PICK_PLAYTORRIO = "playtorrio"
+    /** Pick first torrent stream from installed Stremio add-ons (respects default stream source). */
+    const val TORRENT_AUTO_PICK_ADDON = "addon"
     private const val KEY_TRAILER_AUTOPLAY = "trailer_autoplay"
     private const val KEY_TRAILER_DELAY_SEC = "trailer_delay_sec"
     private const val KEY_SAVED_ALBUM_IDS = "saved_album_ids"
@@ -130,6 +138,22 @@ object AppPreferences {
     var torrentDisableIpv6: Boolean
         get() = prefs.getBoolean(KEY_TORRENT_DISABLE_IPV6, true)
         set(value) = prefs.edit().putBoolean(KEY_TORRENT_DISABLE_IPV6, value).apply()
+
+    /**
+     * When opening the torrent picker from TMDB detail: [TORRENT_AUTO_PICK_MANUAL] shows the list;
+     * [TORRENT_AUTO_PICK_PLAYTORRIO] / [TORRENT_AUTO_PICK_ADDON] start playback automatically when a pick exists.
+     */
+    var torrentAutoPickerMode: String
+        get() = prefs.getString(KEY_TORRENT_AUTO_PICK, TORRENT_AUTO_PICK_MANUAL) ?: TORRENT_AUTO_PICK_MANUAL
+        set(value) {
+            val v = when (value) {
+                TORRENT_AUTO_PICK_PLAYTORRIO,
+                TORRENT_AUTO_PICK_ADDON,
+                -> value
+                else -> TORRENT_AUTO_PICK_MANUAL
+            }
+            prefs.edit().putString(KEY_TORRENT_AUTO_PICK, v).apply()
+        }
 
     var trailerAutoplay: Boolean
         get() = prefs.getBoolean(KEY_TRAILER_AUTOPLAY, true)
