@@ -21,6 +21,14 @@ object AppPreferences {
     private const val KEY_TORRENT_RESPONSIVE = "torrent_responsive"
     private const val KEY_TORRENT_DISABLE_UPLOAD = "torrent_disable_upload"
     private const val KEY_TORRENT_DISABLE_IPV6 = "torrent_disable_ipv6"
+    private const val KEY_TORRENT_AUTO_PICK = "torrent_auto_picker_mode"
+
+    /** Manual torrent list (default). */
+    const val TORRENT_AUTO_PICK_MANUAL = "manual"
+    /** Pick best result from built-in PlayTorrio torrent search. */
+    const val TORRENT_AUTO_PICK_PLAYTORRIO = "playtorrio"
+    /** Pick first torrent stream from installed Stremio add-ons (respects default stream source). */
+    const val TORRENT_AUTO_PICK_ADDON = "addon"
     private const val KEY_TRAILER_AUTOPLAY = "trailer_autoplay"
     private const val KEY_TRAILER_DELAY_SEC = "trailer_delay_sec"
     private const val KEY_SAVED_ALBUM_IDS = "saved_album_ids"
@@ -34,14 +42,48 @@ object AppPreferences {
     private const val KEY_SUPABASE_REFRESH_TOKEN = "supabase_refresh_token"
     private const val KEY_SUPABASE_USER_ID = "supabase_user_id"
     private const val KEY_SUPABASE_EMAIL = "supabase_email"
+    /** One library file for all devices (matches PlayTorrio mobile account sync). */
+    private const val KEY_MIGRATED_SINGLE_LIBRARY = "_migrated_single_library_prefs_v1"
 
     private lateinit var prefs: SharedPreferences
 
     fun init(context: Context) {
-        val activeId = com.playtorrio.tv.data.profile.ProfileManager.activeId()
-        val fileName = if (activeId == "default") PREFS_BASE else "${PREFS_BASE}_$activeId"
-        prefs = context.getSharedPreferences(fileName, Context.MODE_PRIVATE)
+        prefs = context.getSharedPreferences(PREFS_BASE, Context.MODE_PRIVATE)
+        migrateLegacyProfilePrefs(context)
         com.playtorrio.tv.data.stremio.StremioAddonRepository.init(context)
+    }
+
+    private fun migrateLegacyProfilePrefs(context: Context) {
+        if (prefs.getBoolean(KEY_MIGRATED_SINGLE_LIBRARY, false)) return
+        val activeId = try {
+            com.playtorrio.tv.data.profile.ProfileManager.activeId()
+        } catch (_: Exception) {
+            "default"
+        }
+        val legacyName = if (activeId == "default") PREFS_BASE else "${PREFS_BASE}_$activeId"
+        if (legacyName != PREFS_BASE) {
+            val legacy = context.getSharedPreferences(legacyName, Context.MODE_PRIVATE)
+            if (legacy.all.isNotEmpty()) {
+                val ed = prefs.edit()
+                copySharedPreferencesInto(legacy, ed)
+                ed.apply()
+            }
+        }
+        prefs.edit().putBoolean(KEY_MIGRATED_SINGLE_LIBRARY, true).apply()
+    }
+
+    private fun copySharedPreferencesInto(from: SharedPreferences, to: SharedPreferences.Editor) {
+        for ((k, v) in from.all) {
+            when (v) {
+                is String -> to.putString(k, v)
+                is Boolean -> to.putBoolean(k, v)
+                is Int -> to.putInt(k, v)
+                is Long -> to.putLong(k, v)
+                is Float -> to.putFloat(k, v)
+                is Set<*> -> @Suppress("UNCHECKED_CAST") to.putStringSet(k, v as Set<String>)
+                null -> {}
+            }
+        }
     }
 
     var streamingMode: Boolean
@@ -96,6 +138,22 @@ object AppPreferences {
     var torrentDisableIpv6: Boolean
         get() = prefs.getBoolean(KEY_TORRENT_DISABLE_IPV6, true)
         set(value) = prefs.edit().putBoolean(KEY_TORRENT_DISABLE_IPV6, value).apply()
+
+    /**
+     * When opening the torrent picker from TMDB detail: [TORRENT_AUTO_PICK_MANUAL] shows the list;
+     * [TORRENT_AUTO_PICK_PLAYTORRIO] / [TORRENT_AUTO_PICK_ADDON] start playback automatically when a pick exists.
+     */
+    var torrentAutoPickerMode: String
+        get() = prefs.getString(KEY_TORRENT_AUTO_PICK, TORRENT_AUTO_PICK_MANUAL) ?: TORRENT_AUTO_PICK_MANUAL
+        set(value) {
+            val v = when (value) {
+                TORRENT_AUTO_PICK_PLAYTORRIO,
+                TORRENT_AUTO_PICK_ADDON,
+                -> value
+                else -> TORRENT_AUTO_PICK_MANUAL
+            }
+            prefs.edit().putString(KEY_TORRENT_AUTO_PICK, v).apply()
+        }
 
     var trailerAutoplay: Boolean
         get() = prefs.getBoolean(KEY_TRAILER_AUTOPLAY, true)

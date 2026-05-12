@@ -54,6 +54,7 @@ import com.playtorrio.tv.data.torrent.TorrServerService
 import com.playtorrio.tv.data.stremio.InstalledAddon
 import com.playtorrio.tv.data.stremio.StremioAddonRepository
 import com.playtorrio.tv.data.stremio.StremioAddonUrls
+import com.playtorrio.tv.data.sync.PlayTorrioCloudSync
 import com.playtorrio.tv.data.sync.SupabaseSyncException
 import com.playtorrio.tv.data.sync.SupabaseUserSettingsClient
 import com.playtorrio.tv.BuildConfig
@@ -243,6 +244,7 @@ fun SettingsScreen(navController: NavController) {
                 mutableStateOf(AppPreferences.streamingMode)
             }
             var torrentPreset by remember { mutableStateOf(AppPreferences.torrentPreset) }
+            var torrentAutoPicker by remember { mutableStateOf(AppPreferences.torrentAutoPickerMode) }
             var torrentCacheMb by remember { mutableStateOf(AppPreferences.torrentCacheSizeMb) }
             var torrentPreload by remember { mutableStateOf(AppPreferences.torrentPreloadPercent) }
             var torrentReadAhead by remember { mutableStateOf(AppPreferences.torrentReadAheadPercent) }
@@ -299,22 +301,14 @@ fun SettingsScreen(navController: NavController) {
                 )
             }
 
-            suspend fun applyCloudRow(row: SupabaseUserSettingsClient.UserSettingsRow?) {
-                if (row == null) return
-                val parsed = syncClient()?.parseInstalledAddonsFromMobileJson(row.stremioAddonsJson)
-                    ?: emptyList()
-                StremioAddonRepository.replaceAllAddons(parsed)
+            fun refreshAddonUiAfterCloudSync() {
                 addons = StremioAddonRepository.getAddons()
-                val raw = row.defaultStreamSource?.trim()
-                if (raw.isNullOrEmpty()) {
-                    AppPreferences.defaultStremioTransportUrl = ""
-                    defaultStreamKey = "__auto__"
-                } else if (raw == AppPreferences.DEFAULT_STREAM_FORCE_PLAYTORRIO) {
-                    AppPreferences.defaultStremioTransportUrl = AppPreferences.DEFAULT_STREAM_FORCE_PLAYTORRIO
-                    defaultStreamKey = "__playtorrio__"
-                } else {
-                    AppPreferences.defaultStremioTransportUrl = raw
-                    defaultStreamKey = raw
+                defaultStreamKey = when {
+                    AppPreferences.defaultStremioTransportUrl.isEmpty() -> "__auto__"
+                    AppPreferences.defaultStremioTransportUrl ==
+                        AppPreferences.DEFAULT_STREAM_FORCE_PLAYTORRIO -> "__playtorrio__"
+
+                    else -> AppPreferences.defaultStremioTransportUrl
                 }
             }
 
@@ -330,7 +324,7 @@ fun SettingsScreen(navController: NavController) {
                 var pwFocused by remember { mutableStateOf(false) }
                 Text(
                     text = "Sign in with the same email and password as PlayTorrio on your phone. " +
-                        "Then pull to download addons and your preferred stream source.",
+                        "Sync includes addons, default stream source, and continue watching.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.White.copy(alpha = 0.5f)
                 )
@@ -438,13 +432,10 @@ fun SettingsScreen(navController: NavController) {
                                             AppPreferences.supabaseRefreshToken = s.refreshToken.orEmpty()
                                             AppPreferences.supabaseUserId = s.userId
                                             AppPreferences.supabaseEmail = supabaseEmailField.trim()
-                                            val row = client.fetchUserSettings(s.accessToken, s.userId)
-                                            applyCloudRow(row)
-                                            cloudMessage = if (row != null) {
-                                                "Signed in and synced from cloud."
-                                            } else {
-                                                "Signed in. No cloud row yet — use Push from mobile first."
-                                            }
+                                            PlayTorrioCloudSync.pullAll(client)
+                                            refreshAddonUiAfterCloudSync()
+                                            cloudMessage =
+                                                "Signed in and synced addons, resume, and preferences."
                                             supabasePassword = ""
                                         } catch (e: Exception) {
                                             cloudError = (e as? SupabaseSyncException)?.message
@@ -505,19 +496,9 @@ fun SettingsScreen(navController: NavController) {
                                         cloudMessage = null
                                         try {
                                             val client = syncClient()!!
-                                            var token = AppPreferences.supabaseAccessToken
-                                            if (token.isBlank()) {
-                                                val rt = AppPreferences.supabaseRefreshToken
-                                                if (rt.isBlank()) throw SupabaseSyncException("Session expired — sign in again.")
-                                                val s = client.refreshSession(rt)
-                                                AppPreferences.supabaseAccessToken = s.accessToken
-                                                AppPreferences.supabaseRefreshToken = s.refreshToken ?: rt
-                                                token = s.accessToken
-                                            }
-                                            val uid = AppPreferences.supabaseUserId
-                                            val row = client.fetchUserSettings(token, uid)
-                                            applyCloudRow(row)
-                                            cloudMessage = "Pulled latest from cloud."
+                                            PlayTorrioCloudSync.pullAll(client)
+                                            refreshAddonUiAfterCloudSync()
+                                            cloudMessage = "Pulled latest from cloud (addons + resume)."
                                         } catch (e: Exception) {
                                             cloudError = (e as? SupabaseSyncException)?.message
                                                 ?: e.message ?: "Pull failed"
@@ -560,23 +541,9 @@ fun SettingsScreen(navController: NavController) {
                                         cloudMessage = null
                                         try {
                                             val client = syncClient()!!
-                                            var token = AppPreferences.supabaseAccessToken
-                                            if (token.isBlank()) {
-                                                val rt = AppPreferences.supabaseRefreshToken
-                                                if (rt.isBlank()) throw SupabaseSyncException("Session expired — sign in again.")
-                                                val s = client.refreshSession(rt)
-                                                AppPreferences.supabaseAccessToken = s.accessToken
-                                                AppPreferences.supabaseRefreshToken = s.refreshToken ?: rt
-                                                token = s.accessToken
-                                            }
-                                            val uid = AppPreferences.supabaseUserId
-                                            val json = client.installedAddonsToMobileJson(
-                                                StremioAddonRepository.getAddons()
-                                            )
-                                            val def = AppPreferences.defaultStremioTransportUrl
-                                                .takeIf { it.isNotBlank() }
-                                            client.upsertUserSettings(token, uid, json, def)
-                                            cloudMessage = "Pushed this profile to cloud."
+                                            PlayTorrioCloudSync.pushAll(client)
+                                            cloudMessage =
+                                                "Pushed addons, preferences, and watch progress to cloud."
                                         } catch (e: Exception) {
                                             cloudError = (e as? SupabaseSyncException)?.message
                                                 ?: e.message ?: "Push failed"
@@ -675,6 +642,23 @@ fun SettingsScreen(navController: NavController) {
                     letterSpacing = 1.5.sp
                 ),
                 color = Color.White.copy(alpha = 0.4f)
+            )
+
+            Spacer(Modifier.height(12.dp))
+
+            SettingsChoiceRow(
+                title = "Torrent auto-pick",
+                description = "When you open Torrents from a movie or episode: skip the list and start the best match from PlayTorrio search or the first torrent stream from add-ons (order follows Default stream source).",
+                options = listOf(
+                    AppPreferences.TORRENT_AUTO_PICK_MANUAL to "Manual (show list)",
+                    AppPreferences.TORRENT_AUTO_PICK_PLAYTORRIO to "Auto: PlayTorrio",
+                    AppPreferences.TORRENT_AUTO_PICK_ADDON to "Auto: Add-on torrents",
+                ),
+                selectedValue = torrentAutoPicker,
+                onSelected = { key ->
+                    torrentAutoPicker = key
+                    AppPreferences.torrentAutoPickerMode = key
+                },
             )
 
             Spacer(Modifier.height(12.dp))

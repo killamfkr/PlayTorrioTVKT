@@ -42,17 +42,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import com.playtorrio.tv.data.model.*
+import com.playtorrio.tv.data.torrent.TorrentResult
 import com.playtorrio.tv.ui.screens.detail.CastInfo
 import com.playtorrio.tv.ui.screens.detail.CrewInfo
 import kotlinx.coroutines.launch
 import com.playtorrio.tv.ui.screens.detail.DetailUiState
 import com.playtorrio.tv.ui.screens.detail.DetailViewModel
+import com.playtorrio.tv.ui.screens.detail.PendingTorrentPlay
 import com.playtorrio.tv.ui.screens.detail.TorrentOverlay
 import android.content.Intent
 import android.net.Uri
 import com.playtorrio.tv.PlayerActivity
 import com.playtorrio.tv.data.AppPreferences
 import com.playtorrio.tv.data.stremio.StremioService
+import com.playtorrio.tv.data.stremio.StremioStream
 import com.playtorrio.tv.data.stremio.StreamRoute
 import com.playtorrio.tv.ui.screens.detail.StreamingSplash
 
@@ -216,6 +219,18 @@ fun DetailScreen(
                 }
             }
         )
+
+        LaunchedEffect(state.pendingTorrentPlay, mediaId) {
+            val play = state.pendingTorrentPlay ?: return@LaunchedEffect
+            val snap = state
+            viewModel.consumePendingTorrentPlay()
+            when (play) {
+                is PendingTorrentPlay.BuiltIn ->
+                    startDetailTorrentFromBuiltIn(context, play.torrent, snap, mediaId)
+                is PendingTorrentPlay.Addon ->
+                    startDetailTorrentFromAddonStream(context, play.stream, play.route, snap, mediaId)
+            }
+        }
 
         // Streaming splash — shown instead of torrent overlay when Streaming Mode is ON
         StreamingSplash(
@@ -1451,6 +1466,70 @@ private fun formatMoney(amount: Long): String = when {
     amount >= 1_000_000 -> "%.0fM".format(amount / 1_000_000.0)
     amount >= 1_000 -> "%.0fK".format(amount / 1_000.0)
     else -> amount.toString()
+}
+
+private fun startDetailTorrentFromBuiltIn(
+    context: android.content.Context,
+    torrent: TorrentResult,
+    state: DetailUiState,
+    mediaId: Int,
+) {
+    val intent = Intent(context, PlayerActivity::class.java).apply {
+        putExtra("magnetUri", torrent.magnetLink)
+        putExtra("title", state.title)
+        putExtra("logoUrl", state.logoUrl)
+        putExtra("backdropUrl", state.backdropUrl)
+        putExtra("posterUrl", state.posterUrl)
+        putExtra("year", state.year)
+        putExtra("rating", state.voteAverage?.let { String.format("%.1f", it) })
+        putExtra("overview", state.overview)
+        putExtra("isMovie", state.isMovie)
+        state.torrentSeasonNumber?.let { putExtra("seasonNumber", it) }
+        state.torrentEpisodeNumber?.let { putExtra("episodeNumber", it) }
+        putExtra("episodeTitle", state.torrentEpisodeTitle)
+        putExtra("tmdbId", mediaId)
+        state.imdbId?.let { putExtra("imdbId", it) }
+    }
+    context.startActivity(intent)
+}
+
+private fun startDetailTorrentFromAddonStream(
+    context: android.content.Context,
+    stream: StremioStream,
+    route: StreamRoute.Torrent,
+    state: DetailUiState,
+    mediaId: Int,
+) {
+    val intent = Intent(context, PlayerActivity::class.java).apply {
+        putExtra("magnetUri", route.magnet)
+        route.fileIdx?.let { putExtra("fileIdx", it) }
+        putExtra("title", state.title)
+        putExtra("logoUrl", state.logoUrl)
+        putExtra("backdropUrl", state.backdropUrl)
+        putExtra("posterUrl", state.posterUrl)
+        putExtra("year", state.year)
+        putExtra("rating", state.voteAverage?.let { String.format("%.1f", it) })
+        putExtra("overview", state.overview)
+        putExtra("isMovie", state.isMovie)
+        state.torrentSeasonNumber?.let { putExtra("seasonNumber", it) }
+        state.torrentEpisodeNumber?.let { putExtra("episodeNumber", it) }
+        putExtra("episodeTitle", state.torrentEpisodeTitle)
+        putExtra("tmdbId", mediaId)
+        state.imdbId?.let { putExtra("imdbId", it) }
+        stream.addonId?.let { putExtra("addonId", it) }
+        putExtra("stremioType", if (state.isMovie) "movie" else "series")
+        state.imdbId?.let { imdb ->
+            val sid = if (!state.isMovie && state.torrentSeasonNumber != null && state.torrentEpisodeNumber != null) {
+                "$imdb:${state.torrentSeasonNumber}:${state.torrentEpisodeNumber}"
+            } else {
+                imdb
+            }
+            putExtra("stremioId", sid)
+        }
+        (stream.url ?: stream.infoHash)?.let { putExtra("streamPickKey", it) }
+        (stream.name ?: stream.title)?.let { putExtra("streamPickName", it) }
+    }
+    context.startActivity(intent)
 }
 
 private fun handleStremioDeepLinkFromDetail(route: StreamRoute.StremioDeepLink, navController: NavController) {

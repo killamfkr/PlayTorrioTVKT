@@ -104,6 +104,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.navigation.NavController
+import com.playtorrio.tv.data.AppPreferences
 import com.playtorrio.tv.data.model.TmdbMedia
 import android.net.Uri
 import com.playtorrio.tv.data.stremio.BoardRow
@@ -190,21 +191,6 @@ fun HomeScreen(navController: NavController, viewModel: HomeViewModel = viewMode
         val navFocusRequester = remember { FocusRequester() }
         // Set from inside the content branch; called by NavPill to drop focus into the active row.
         val exitNavToContent = remember { mutableStateOf<(() -> Unit)?>(null) }
-
-        // === IN-APP UPDATE CHECK (popup is rendered at the end of this Box so it is on top) ===
-        var updateInfo by remember { mutableStateOf<com.playtorrio.tv.data.update.UpdateService.UpdateInfo?>(null) }
-        var updateDismissed by remember { mutableStateOf(false) }
-        var updateBusy by remember { mutableStateOf(false) }
-        var updateDownloaded by remember { mutableStateOf(0L) }
-        var updateTotal by remember { mutableStateOf(0L) }
-        LaunchedEffect(Unit) {
-            if (com.playtorrio.tv.ui.screens.UpdatePromptShownThisSession.value) return@LaunchedEffect
-            val info = com.playtorrio.tv.data.update.UpdateService.check()
-            if (info != null) {
-                updateInfo = info
-                com.playtorrio.tv.ui.screens.UpdatePromptShownThisSession.value = true
-            }
-        }
 
         // === BACKDROP ===
         AnimatedContent(
@@ -515,42 +501,6 @@ fun HomeScreen(navController: NavController, viewModel: HomeViewModel = viewMode
             )
         }
 
-        // === UPDATE POPUP (must be the LAST child so it renders on top of every overlay) ===
-        val info = updateInfo
-        if (info != null && !updateDismissed) {
-            com.playtorrio.tv.ui.components.UpdatePopup(
-                versionName = info.versionName,
-                releaseNotes = info.releaseNotes,
-                isDownloading = updateBusy,
-                downloadedBytes = updateDownloaded,
-                totalBytes = updateTotal,
-                onLater = { updateDismissed = true },
-                onUpdateNow = {
-                    if (updateBusy) return@UpdatePopup
-                    updateBusy = true
-                    updateDownloaded = 0L
-                    updateTotal = info.sizeBytes
-                    coroutineScope.launch {
-                        val apk = com.playtorrio.tv.data.update.UpdateService.download(
-                            context, info,
-                        ) { read, total ->
-                            updateDownloaded = read
-                            if (total > 0) updateTotal = total
-                        }
-                        if (apk != null) {
-                            val launched = com.playtorrio.tv.data.update.UpdateService.installApk(context, apk)
-                            if (!launched) {
-                                // User must grant "Install unknown apps". Settings already opened.
-                                // Keep popup so they can retry after returning.
-                            } else {
-                                updateDismissed = true
-                            }
-                        }
-                        updateBusy = false
-                    }
-                }
-            )
-        }
         } // CompositionLocalProvider(LocalHomeCardScale)
     }
 }
@@ -665,11 +615,7 @@ private fun NavPill(
                             onExitRight = onExitToContent,
                         )
                         ProfilePillItem(
-                            onClicked = {
-                                navController.navigate("profile_select") {
-                                    popUpTo("home") { inclusive = false }
-                                }
-                            },
+                            onClicked = { navController.navigate("settings") },
                             onExitRight = onExitToContent,
                             onExitDown = onExitToContent,
                         )
@@ -797,7 +743,9 @@ private fun ProfilePillItem(
     onExitRight: (() -> Unit)? = null,
     onExitDown: (() -> Unit)? = null,
 ) {
-    val profile = remember { com.playtorrio.tv.data.profile.ProfileManager.activeProfile() }
+    val accountTitle =
+        AppPreferences.supabaseEmail.ifBlank { "Account" }
+    val signedIn = AppPreferences.supabaseAccessToken.isNotBlank()
     var isFocused by remember { mutableStateOf(false) }
     val bgAlpha by animateFloatAsState(
         targetValue = if (isFocused) 0.2f else 0f,
@@ -845,33 +793,25 @@ private fun ProfilePillItem(
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                if (!profile.imageUrl.isNullOrBlank()) {
-                    AsyncImage(
-                        model = profile.imageUrl,
-                        contentDescription = profile.name,
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize().clip(CircleShape)
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Filled.Person,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.5f),
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
+                Icon(
+                    imageVector = Icons.Filled.Person,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.5f),
+                    modifier = Modifier.size(18.dp)
+                )
             }
             Spacer(modifier = Modifier.width(10.dp))
             Column {
                 Text(
-                    text = profile.name,
+                    text = accountTitle,
                     color = if (isFocused) Color.White else Color.White.copy(alpha = 0.8f),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = "Switch profile",
+                    text = if (signedIn) "Cloud sync · Settings" else "Sign in under Settings",
                     color = Color.White.copy(alpha = 0.4f),
                     fontSize = 9.sp
                 )
