@@ -1,13 +1,18 @@
-# Builds installable APKs in CI (debug — signed with the default debug keystore).
-# Release builds need app/release.jks (gitignored); build those locally or add keystore secrets.
+# Debug APKs for every push / PR. Requires Android SDK on the runner (Gradle does not bundle it).
+#
+# Manual "Run workflow": GitHub only lists workflow_dispatch workflows that exist on the
+# repository DEFAULT branch. Merge this file to main (or your default branch) to enable the button.
 name: Build APK
 
 on:
   push:
-    branches: [main]
   pull_request:
-    branches: [main]
   workflow_dispatch:
+
+# Token needs write so upload-artifact can attach APKs (many repos default to read-only).
+permissions:
+  contents: read
+  actions: write
 
 concurrency:
   group: build-apk-${{ github.workflow }}-${{ github.ref }}
@@ -28,15 +33,35 @@ jobs:
           java-version: 17
           cache: gradle
 
+      # Without this, Gradle fails: SDK location not found (ANDROID_HOME unset).
+      # App splits APKs by ABI → outputs live under apk/<variant>/<abi>/*.apk
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: >-
+            tools
+            platform-tools
+            platforms;android-36
+            build-tools;35.0.0
+
       - name: Gradle assembleDebug
         run: |
           chmod +x ./gradlew
-          ./gradlew --no-daemon assembleDebug
+          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          ./gradlew --no-daemon --stacktrace assembleDebug
+
+      - name: Artifact label
+        id: label
+        run: |
+          REF="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          SAFE="$(echo "$REF" | tr '/' '-' | tr -cd 'A-Za-z0-9._-' | cut -c1-80)"
+          echo "slug=${SAFE:-branch}" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: playtorrio-debug-apks
-          path: |
-            app/build/outputs/apk/debug/*.apk
+          name: playtorrio-debug-${{ steps.label.outputs.slug }}-${{ github.sha }}
+          # ABI splits place APKs under debug/<abi>/
+          path: app/build/outputs/apk/**/*.apk
           if-no-files-found: error

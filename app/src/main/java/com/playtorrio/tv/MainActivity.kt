@@ -17,6 +17,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.playtorrio.tv.data.AppPreferences
+import com.playtorrio.tv.data.sync.PlayTorrioCloudSync
 import com.playtorrio.tv.data.torrent.TorrServerService
 import com.playtorrio.tv.ui.screens.DetailScreen
 import com.playtorrio.tv.ui.screens.HomeScreen
@@ -24,7 +25,6 @@ import com.playtorrio.tv.ui.screens.PersonScreen
 import com.playtorrio.tv.ui.screens.SettingsScreen
 import com.playtorrio.tv.ui.screens.SplashScreen
 import com.playtorrio.tv.ui.screens.StudioScreen
-import com.playtorrio.tv.ui.screens.profile.ProfileSelectScreen
 import com.playtorrio.tv.ui.screens.detail.StremioDetailScreen
 import com.playtorrio.tv.ui.screens.music.MusicScreen
 import com.playtorrio.tv.ui.screens.audiobook.AudiobookScreen
@@ -62,6 +62,7 @@ class MainActivity : ComponentActivity() {
         AppPreferences.init(this)
         CoroutineScope(Dispatchers.IO).launch {
             TorrServerService.warmup(this@MainActivity)
+            PlayTorrioCloudSync.startupPullIfSignedIn()
         }
 
         setContent {
@@ -77,13 +78,10 @@ class MainActivity : ComponentActivity() {
                 ) {
                     composable("splash") {
                         SplashScreen(onFinished = {
-                            navController.navigate("profile_select") {
+                            navController.navigate("home") {
                                 popUpTo("splash") { inclusive = true }
                             }
                         })
-                    }
-                    composable("profile_select") {
-                        ProfileSelectScreen(navController = navController)
                     }
                     composable("home") {
                         HomeScreen(navController = navController)

@@ -20,6 +20,7 @@ object StremioAddonRepository {
 
     private const val PREFS_BASE = "stremio_prefs"
     private const val KEY_ADDONS = "installed_addons"
+    private const val KEY_MIGRATED_SINGLE_LIBRARY = "_migrated_single_stremio_prefs_v1"
     private const val TAG = "StremioAddonRepo"
 
     private lateinit var prefs: SharedPreferences
@@ -34,9 +35,37 @@ object StremioAddonRepository {
         .build()
 
     fun init(context: Context) {
-        val activeId = com.playtorrio.tv.data.profile.ProfileManager.activeId()
-        val fileName = if (activeId == "default") PREFS_BASE else "${PREFS_BASE}_$activeId"
-        prefs = context.getSharedPreferences(fileName, Context.MODE_PRIVATE)
+        prefs = context.getSharedPreferences(PREFS_BASE, Context.MODE_PRIVATE)
+        migrateLegacyStremioPrefs(context)
+    }
+
+    private fun migrateLegacyStremioPrefs(context: Context) {
+        if (prefs.getBoolean(KEY_MIGRATED_SINGLE_LIBRARY, false)) return
+        val activeId = try {
+            com.playtorrio.tv.data.profile.ProfileManager.activeId()
+        } catch (_: Exception) {
+            "default"
+        }
+        val legacyName = if (activeId == "default") PREFS_BASE else "${PREFS_BASE}_$activeId"
+        if (legacyName != PREFS_BASE) {
+            val legacy = context.getSharedPreferences(legacyName, Context.MODE_PRIVATE)
+            if (legacy.all.isNotEmpty()) {
+                val ed = prefs.edit()
+                for ((k, v) in legacy.all) {
+                    when (v) {
+                        is String -> ed.putString(k, v)
+                        is Boolean -> ed.putBoolean(k, v)
+                        is Int -> ed.putInt(k, v)
+                        is Long -> ed.putLong(k, v)
+                        is Float -> ed.putFloat(k, v)
+                        is Set<*> -> @Suppress("UNCHECKED_CAST") ed.putStringSet(k, v as Set<String>)
+                        null -> {}
+                    }
+                }
+                ed.apply()
+            }
+        }
+        prefs.edit().putBoolean(KEY_MIGRATED_SINGLE_LIBRARY, true).apply()
     }
 
     // ── Read ─────────────────────────────────────────────────────────────────
