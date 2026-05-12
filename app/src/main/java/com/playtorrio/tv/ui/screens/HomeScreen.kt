@@ -192,21 +192,6 @@ fun HomeScreen(navController: NavController, viewModel: HomeViewModel = viewMode
         // Set from inside the content branch; called by NavPill to drop focus into the active row.
         val exitNavToContent = remember { mutableStateOf<(() -> Unit)?>(null) }
 
-        // === IN-APP UPDATE CHECK (popup is rendered at the end of this Box so it is on top) ===
-        var updateInfo by remember { mutableStateOf<com.playtorrio.tv.data.update.UpdateService.UpdateInfo?>(null) }
-        var updateDismissed by remember { mutableStateOf(false) }
-        var updateBusy by remember { mutableStateOf(false) }
-        var updateDownloaded by remember { mutableStateOf(0L) }
-        var updateTotal by remember { mutableStateOf(0L) }
-        LaunchedEffect(Unit) {
-            if (com.playtorrio.tv.ui.screens.UpdatePromptShownThisSession.value) return@LaunchedEffect
-            val info = com.playtorrio.tv.data.update.UpdateService.check()
-            if (info != null) {
-                updateInfo = info
-                com.playtorrio.tv.ui.screens.UpdatePromptShownThisSession.value = true
-            }
-        }
-
         // === BACKDROP ===
         AnimatedContent(
             targetState = state.featured?.backdropUrl,
@@ -516,42 +501,6 @@ fun HomeScreen(navController: NavController, viewModel: HomeViewModel = viewMode
             )
         }
 
-        // === UPDATE POPUP (must be the LAST child so it renders on top of every overlay) ===
-        val info = updateInfo
-        if (info != null && !updateDismissed) {
-            com.playtorrio.tv.ui.components.UpdatePopup(
-                versionName = info.versionName,
-                releaseNotes = info.releaseNotes,
-                isDownloading = updateBusy,
-                downloadedBytes = updateDownloaded,
-                totalBytes = updateTotal,
-                onLater = { updateDismissed = true },
-                onUpdateNow = {
-                    if (updateBusy) return@UpdatePopup
-                    updateBusy = true
-                    updateDownloaded = 0L
-                    updateTotal = info.sizeBytes
-                    coroutineScope.launch {
-                        val apk = com.playtorrio.tv.data.update.UpdateService.download(
-                            context, info,
-                        ) { read, total ->
-                            updateDownloaded = read
-                            if (total > 0) updateTotal = total
-                        }
-                        if (apk != null) {
-                            val launched = com.playtorrio.tv.data.update.UpdateService.installApk(context, apk)
-                            if (!launched) {
-                                // User must grant "Install unknown apps". Settings already opened.
-                                // Keep popup so they can retry after returning.
-                            } else {
-                                updateDismissed = true
-                            }
-                        }
-                        updateBusy = false
-                    }
-                }
-            )
-        }
         } // CompositionLocalProvider(LocalHomeCardScale)
     }
 }
