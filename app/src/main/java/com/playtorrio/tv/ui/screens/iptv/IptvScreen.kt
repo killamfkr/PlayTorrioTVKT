@@ -1,9 +1,13 @@
+@file:OptIn(ExperimentalFoundationApi::class)
+
 package com.playtorrio.tv.ui.screens.iptv
 
 import android.content.Intent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -183,6 +187,16 @@ private fun Modifier.tvSelectShortOrLong(
         if (!select) return@onPreviewKeyEvent false
         when (e.type) {
             KeyEventType.KeyDown -> {
+                // D-pad / remote repeats KeyDown while held — do not restart the timer each repeat
+                // or the long-press action never fires.
+                val isRepeat = try {
+                    e.nativeKeyEvent.repeatCount > 0
+                } catch (_: Throwable) {
+                    false
+                }
+                if (isRepeat) {
+                    return@onPreviewKeyEvent true
+                }
                 longDispatched = false
                 holdJob?.cancel()
                 if (onLongHold != null) {
@@ -1463,7 +1477,7 @@ private fun BrowserView(state: IptvUiState, vm: IptvViewModel) {
         )
         if (section == IptvSection.LIVE) {
             Text(
-                "Hold Select (center) on a channel to favorite · short press plays. Starred portals can't be deleted in Edit mode.",
+                "Long-press a channel to favorite it (short press plays). Hold Select on a portal card to star it.",
                 color = TextDim2,
                 fontSize = 11.sp,
                 modifier = Modifier.padding(top = 6.dp, start = 4.dp),
@@ -1597,7 +1611,7 @@ private fun BrowserView(state: IptvUiState, vm: IptvViewModel) {
                                 number = index + 1,
                                 accent = accent,
                                 isFavorite = s.streamId in state.favoriteStreamIds,
-                                onToggleFavorite = { vm.toggleFavoriteLiveChannel(s.streamId) },
+                                onToggleFavorite = { vm.toggleFavoriteStream(portal, s.streamId) },
                             ) {
                                 playStream(ctx, portal, s)
                             }
@@ -1775,9 +1789,9 @@ private fun LiveChannelRow(
             .fillMaxWidth()
             .onFocusChanged { focused = it.isFocused }
             .focusable()
-            .tvSelectShortOrLong(
-                onShortClick = onClick,
-                onLongHold = onToggleFavorite,
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onToggleFavorite,
             )
     ) {
         Row(
@@ -2192,7 +2206,7 @@ private fun FavoriteChannelsTabView(state: IptvUiState, vm: IptvViewModel) {
             onBack = { vm.back() },
         )
         Text(
-            "Hold Select to remove from favorites · Short press plays · Guide text loads when the provider exposes EPG.",
+            "Long-press a row to remove from favorites · Short press plays · Guide text loads when the provider exposes EPG.",
             color = TextDim2,
             fontSize = 11.sp,
             modifier = Modifier.padding(top = 8.dp, start = 4.dp),

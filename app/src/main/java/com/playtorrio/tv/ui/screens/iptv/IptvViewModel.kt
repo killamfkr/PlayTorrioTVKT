@@ -504,12 +504,6 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
         _ui.value = _ui.value.copy(browserSearch = query)
     }
 
-    fun toggleFavoriteLiveChannel(streamId: String) {
-        val portal = _ui.value.activePortal ?: return
-        if (_ui.value.activeSection != IptvSection.LIVE) return
-        setFavoriteStreamForPortal(portal.portal, streamId)
-    }
-
     /** Toggle favorite for any portal’s live stream (browser or channel search results). */
     fun toggleFavoriteStream(portal: VerifiedPortal, streamId: String) {
         setFavoriteStreamForPortal(portal.portal, streamId)
@@ -533,7 +527,7 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
             next = next.copy(
                 favoriteChannelsRows = rows,
                 favoriteChannelsError = if (rows.isEmpty()) {
-                    "No favorite channels yet. Hold Select on a channel in Live TV to add one."
+                    "No favorite channels yet. Long-press a channel in Live TV to add one."
                 } else {
                     null
                 },
@@ -671,7 +665,7 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
                 favoriteChannelsLoading = false,
                 favoriteChannelsRows = rows,
                 favoriteChannelsError = if (rows.isEmpty()) {
-                    "No favorite channels yet. Hold Select on a channel in Live TV to add one."
+                    "No favorite channels yet. Long-press a channel in Live TV to add one."
                 } else {
                     null
                 },
