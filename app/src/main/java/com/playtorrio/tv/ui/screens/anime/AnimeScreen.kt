@@ -31,7 +31,7 @@ private val Gold    = Color(0xFFFFD700)
 private val BgDark  = Color(0xFF0A0A0F)
 private val CardBg  = Color(0xFF13131A)
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun AnimeScreen(
     navController: NavController,
@@ -73,7 +73,18 @@ fun AnimeScreen(
 
         // ── Main scrollable list ──────────────────────────────────────────────
         LazyColumn(
-            modifier = Modifier.fillMaxSize().focusGroup(),
+            modifier = Modifier
+                .fillMaxSize()
+                .focusRestorer()
+                .focusProperties {
+                    exit = { direction ->
+                        if (direction == FocusDirection.Left || direction == FocusDirection.Right) {
+                            FocusRequester.Cancel
+                        } else {
+                            FocusRequester.Default
+                        }
+                    }
+                },
             contentPadding = PaddingValues(bottom = 48.dp),
         ) {
             // Invisible 0-height anchor so TopBar down-press can land focus here
@@ -156,7 +167,7 @@ private fun LazyListScope.animeRow(
         }
         Spacer(Modifier.height(10.dp))
         LazyRow(
-            modifier = Modifier.focusGroup(),
+            modifier = Modifier,
             contentPadding = PaddingValues(horizontal = 24.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -449,7 +460,7 @@ private fun ContinueWatchingAnimeRow(
         Spacer(Modifier.height(10.dp))
 
         LazyRow(
-            modifier = Modifier.focusGroup(),
+            modifier = Modifier,
             contentPadding = PaddingValues(horizontal = 24.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
