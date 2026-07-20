@@ -21,6 +21,7 @@ import com.playtorrio.tv.data.iptv.EpgGuide
 import com.playtorrio.tv.data.iptv.EpgProgram
 import com.playtorrio.tv.data.iptv.EpgStore
 import com.playtorrio.tv.data.iptv.GuideChannel
+import com.playtorrio.tv.data.iptv.IptvFavoritesStore
 import com.playtorrio.tv.data.cloud.CloudConfig
 import com.playtorrio.tv.data.cloud.CloudIptvRepository
 import com.playtorrio.tv.data.iptv.HardcodedChannel
@@ -115,6 +116,8 @@ data class IptvUiState(
     val selectedGuideChannel: GuideChannel? = null,
     val guideSearch: String = "",
     val epgGuide: EpgGuide? = null,
+    val guideFavoriteIds: Set<String> = emptySet(),
+    val guideFavoritesOnly: Boolean = false,
 
     // PlayTorrio Cloud (Supabase)
     val cloudSignedIn: Boolean = false,
@@ -552,6 +555,8 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
             selectedGuideChannel = null,
             guideSearch = "",
             epgGuide = null,
+            guideFavoriteIds = IptvFavoritesStore.loadIds(getApplication(), keyOf(portal)),
+            guideFavoritesOnly = false,
         )
         guideJob = viewModelScope.launch(Dispatchers.IO) {
             val streams = runCatching {
@@ -600,6 +605,16 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setGuideSearch(query: String) {
         _ui.value = _ui.value.copy(guideSearch = query)
+    }
+
+    fun setGuideFavoritesOnly(enabled: Boolean) {
+        _ui.value = _ui.value.copy(guideFavoritesOnly = enabled)
+    }
+
+    fun toggleGuideFavorite(streamId: String) {
+        val portal = _ui.value.activePortal ?: return
+        val updated = IptvFavoritesStore.toggleId(getApplication(), keyOf(portal), streamId)
+        _ui.value = _ui.value.copy(guideFavoriteIds = updated)
     }
 
     fun openSection(section: IptvSection) {
@@ -1169,6 +1184,8 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
                     guideSearch = "",
                     epgGuide = null,
                     guideError = null,
+                    guideFavoriteIds = emptySet(),
+                    guideFavoritesOnly = false,
                 )
                 true
             }

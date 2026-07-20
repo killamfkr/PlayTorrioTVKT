@@ -5,6 +5,9 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,7 +47,9 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
@@ -2781,17 +2786,29 @@ private val GuideTimeFmt = SimpleDateFormat("h:mm a", Locale.getDefault())
 private fun formatGuideTime(ms: Long): String =
     if (ms <= 0L) "—" else GuideTimeFmt.format(Date(ms))
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun TvGuideView(state: IptvUiState, vm: IptvViewModel) {
     val ctx = LocalContext.current
     val portal = state.activePortal ?: return
     val channelFocus = remember { FocusRequester() }
+    val favFilterFocus = remember { FocusRequester() }
     val query = state.guideSearch.trim().lowercase()
-    val filtered = if (query.isEmpty()) state.guideChannels
-    else state.guideChannels.filter {
-        it.channelName.lowercase().contains(query) ||
-            it.now?.title?.lowercase()?.contains(query) == true
+    val favIds = state.guideFavoriteIds
+    var channels = state.guideChannels
+    if (query.isNotEmpty()) {
+        channels = channels.filter {
+            it.channelName.lowercase().contains(query) ||
+                it.now?.title?.lowercase()?.contains(query) == true
+        }
+    }
+    if (state.guideFavoritesOnly) {
+        channels = channels.filter { it.stream.streamId in favIds }
+    } else {
+        channels = channels.sortedWith(
+            compareByDescending<GuideChannel> { it.stream.streamId in favIds }
+                .thenBy { it.channelName.lowercase() },
+        )
     }
 
     Column(
@@ -2838,7 +2855,47 @@ private fun TvGuideView(state: IptvUiState, vm: IptvViewModel) {
                 unfocusedTextColor = Color.White,
             ),
         )
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(10.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ToggleChip(
+                checked = state.guideFavoritesOnly,
+                label = if (favIds.isEmpty()) "Favorites only" else "Favorites only (${favIds.size})",
+                onChange = { vm.setGuideFavoritesOnly(it) },
+                focusRequester = favFilterFocus,
+            )
+            Text(
+                "Short press selects · Long-press stars · Watch to play",
+                color = TextDim2,
+                fontSize = 11.sp,
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+
+        if (state.guideFavoritesOnly && channels.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        Icons.Outlined.StarBorder,
+                        contentDescription = null,
+                        tint = TextDim,
+                        modifier = Modifier.size(40.dp),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text("No favorite channels yet", color = TextDim, fontSize = 15.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Long-press a channel in the list to star it",
+                        color = TextDim2,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+            return
+        }
 
         Row(
             Modifier.fillMaxSize(),
@@ -2855,16 +2912,15 @@ private fun TvGuideView(state: IptvUiState, vm: IptvViewModel) {
                     .padding(8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                items(filtered, key = { it.stream.streamId }) { ch ->
-                    val idx = filtered.indexOf(ch)
+                items(channels, key = { it.stream.streamId }) { ch ->
+                    val idx = channels.indexOf(ch)
                     GuideChannelRow(
                         channel = ch,
                         selected = state.selectedGuideChannel?.stream?.streamId == ch.stream.streamId,
+                        isFavorite = ch.stream.streamId in favIds,
                         focusRequester = if (idx == 0) channelFocus else null,
                         onClick = { vm.selectGuideChannel(ch) },
-                        onPlay = {
-                            playStream(ctx, portal, ch.stream)
-                        },
+                        onToggleFavorite = { vm.toggleGuideFavorite(ch.stream.streamId) },
                     )
                 }
             }
@@ -2885,6 +2941,7 @@ private fun TvGuideView(state: IptvUiState, vm: IptvViewModel) {
                         Text("Select a channel", color = TextDim)
                     }
                 } else {
+                    val selectedFav = selected.stream.streamId in favIds
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (selected.icon.isNotBlank()) {
                             AsyncImage(
@@ -2916,6 +2973,11 @@ private fun TvGuideView(state: IptvUiState, vm: IptvViewModel) {
                                 )
                             }
                         }
+                        GuideFavoriteButton(
+                            isFavorite = selectedFav,
+                            onToggle = { vm.toggleGuideFavorite(selected.stream.streamId) },
+                        )
+                        Spacer(Modifier.width(8.dp))
                         Card(
                             onClick = { playStream(ctx, portal, selected.stream) },
                             colors = CardDefaults.colors(containerColor = Accent.copy(alpha = 0.25f)),
@@ -2977,31 +3039,65 @@ private fun TvGuideView(state: IptvUiState, vm: IptvViewModel) {
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun GuideChannelRow(
-    channel: GuideChannel,
-    selected: Boolean,
-    focusRequester: FocusRequester?,
-    onClick: () -> Unit,
-    onPlay: () -> Unit,
+private fun GuideFavoriteButton(
+    isFavorite: Boolean,
+    onToggle: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
     Card(
-        onClick = {
-            onClick()
-            onPlay()
-        },
+        onClick = onToggle,
+        modifier = Modifier.onFocusChanged { focused = it.isFocused },
+        colors = CardDefaults.colors(
+            containerColor = if (isFavorite) Color(0xFFFBBF24).copy(alpha = 0.18f)
+            else Color.White.copy(alpha = 0.06f),
+        ),
+        shape = CardDefaults.shape(RoundedCornerShape(8.dp)),
+    ) {
+        Icon(
+            imageVector = if (isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
+            contentDescription = if (isFavorite) "Remove favorite" else "Add favorite",
+            tint = if (isFavorite) Color(0xFFFBBF24) else if (focused) Color.White else TextDim2,
+            modifier = Modifier
+                .padding(8.dp)
+                .size(18.dp),
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun GuideChannelRow(
+    channel: GuideChannel,
+    selected: Boolean,
+    isFavorite: Boolean,
+    focusRequester: FocusRequester?,
+    onClick: () -> Unit,
+    onToggleFavorite: () -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-            .onFocusChanged { focused = it.isFocused },
-        colors = CardDefaults.colors(
-            containerColor = when {
-                focused -> Accent.copy(alpha = 0.2f)
-                selected -> Surface2
-                else -> Color.Transparent
-            },
-        ),
-        shape = CardDefaults.shape(RoundedCornerShape(10.dp)),
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onToggleFavorite,
+            )
+            .clip(RoundedCornerShape(10.dp))
+            .background(
+                when {
+                    focused -> Accent.copy(alpha = 0.2f)
+                    selected -> Surface2
+                    else -> Color.Transparent
+                },
+            )
+            .border(
+                width = if (focused) 1.dp else 0.dp,
+                color = if (focused) Accent.copy(alpha = 0.5f) else Color.Transparent,
+                shape = RoundedCornerShape(10.dp),
+            ),
     ) {
         Row(
             Modifier
@@ -3051,7 +3147,14 @@ private fun GuideChannelRow(
                         .background(Color(0xFFEF4444).copy(alpha = 0.15f))
                         .padding(horizontal = 5.dp, vertical = 2.dp),
                 )
+                Spacer(Modifier.width(6.dp))
             }
+            Icon(
+                imageVector = if (isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                contentDescription = if (isFavorite) "Favorite" else "Not favorite",
+                tint = if (isFavorite) Color(0xFFFBBF24) else TextDim2,
+                modifier = Modifier.size(18.dp),
+            )
         }
     }
 }
