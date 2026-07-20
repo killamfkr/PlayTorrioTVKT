@@ -21,6 +21,8 @@ import com.playtorrio.tv.data.iptv.EpgGuide
 import com.playtorrio.tv.data.iptv.EpgProgram
 import com.playtorrio.tv.data.iptv.EpgStore
 import com.playtorrio.tv.data.iptv.GuideChannel
+import com.playtorrio.tv.data.cloud.CloudConfig
+import com.playtorrio.tv.data.cloud.CloudIptvRepository
 import com.playtorrio.tv.data.iptv.HardcodedChannel
 import com.playtorrio.tv.data.iptv.HardcodedChannels
 import kotlinx.coroutines.Dispatchers
@@ -113,6 +115,11 @@ data class IptvUiState(
     val selectedGuideChannel: GuideChannel? = null,
     val guideSearch: String = "",
     val epgGuide: EpgGuide? = null,
+
+    // PlayTorrio Cloud (Supabase)
+    val cloudSignedIn: Boolean = false,
+    val cloudEmail: String = "",
+    val cloudConfigured: Boolean = CloudConfig.isConfigured(),
 )
 
 /** A single alive stream found while resolving a HardcodedChannel. */
@@ -142,7 +149,14 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         val saved = IptvStore.load(app)
-        if (saved.isNotEmpty()) _ui.value = _ui.value.copy(verified = saved)
+        val cloudEmail = CloudIptvRepository.signedInEmail(app).orEmpty()
+        if (saved.isNotEmpty() || cloudEmail.isNotEmpty()) {
+            _ui.value = _ui.value.copy(
+                verified = saved,
+                cloudSignedIn = cloudEmail.isNotEmpty(),
+                cloudEmail = cloudEmail,
+            )
+        }
     }
 
     // ── Scrape / verify ────────────────────────────────────────────────
@@ -365,6 +379,82 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
             )
             IptvStore.save(getApplication(), merged)
         }
+    }
+
+    fun loginCloud(email: String, password: String) {
+        val e = email.trim()
+        val pw = password.trim()
+        if (!CloudConfig.isConfigured()) {
+            _ui.value = _ui.value.copy(
+                addError = "PlayTorrio Cloud is not configured. Add SUPABASE_URL and SUPABASE_ANON_KEY to local.properties.",
+            )
+            return
+        }
+        if (e.isEmpty() || pw.isEmpty()) {
+            _ui.value = _ui.value.copy(addError = "Email and password are required.")
+            return
+        }
+        viewModelScope.launch {
+            _ui.value = _ui.value.copy(isAdding = true, addError = null)
+            val result = withContext(Dispatchers.IO) {
+                CloudIptvRepository.loginAndSync(getApplication(), e, pw)
+            }
+            result.fold(
+                onSuccess = { sync ->
+                    val saved = IptvStore.load(getApplication())
+                    _ui.value = _ui.value.copy(
+                        isAdding = false,
+                        showAddDialog = false,
+                        addError = null,
+                        verified = saved,
+                        cloudSignedIn = true,
+                        cloudEmail = sync.email,
+                        statusText = "Cloud sync: ${sync.imported} portal(s) added · ${sync.totalSaved} saved.",
+                    )
+                },
+                onFailure = { err ->
+                    _ui.value = _ui.value.copy(
+                        isAdding = false,
+                        addError = err.message ?: "Cloud login failed.",
+                    )
+                },
+            )
+        }
+    }
+
+    fun syncCloud() {
+        if (!_ui.value.cloudSignedIn) return
+        viewModelScope.launch {
+            _ui.value = _ui.value.copy(isAdding = true, statusText = "Syncing PlayTorrio Cloud…")
+            val result = withContext(Dispatchers.IO) {
+                CloudIptvRepository.syncWithStoredSession(getApplication())
+            }
+            result.fold(
+                onSuccess = { sync ->
+                    val saved = IptvStore.load(getApplication())
+                    _ui.value = _ui.value.copy(
+                        isAdding = false,
+                        verified = saved,
+                        statusText = "Cloud sync: ${sync.imported} portal(s) verified · ${sync.totalSaved} saved.",
+                    )
+                },
+                onFailure = { err ->
+                    _ui.value = _ui.value.copy(
+                        isAdding = false,
+                        statusText = err.message ?: "Cloud sync failed.",
+                    )
+                },
+            )
+        }
+    }
+
+    fun signOutCloud() {
+        CloudIptvRepository.signOut(getApplication())
+        _ui.value = _ui.value.copy(
+            cloudSignedIn = false,
+            cloudEmail = "",
+            statusText = "Signed out of PlayTorrio Cloud.",
+        )
     }
 
     fun addM3u(rawUrl: String, displayName: String) {

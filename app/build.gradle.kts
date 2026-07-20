@@ -4,6 +4,13 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+import java.util.Properties
+
+val localProps = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+
 android {
     namespace = "com.playtorrio.tv"
     compileSdk = 36
@@ -17,6 +24,16 @@ android {
 
         // GitHub repo used by the in-app updater (UpdateChecker reads BuildConfig.UPDATE_REPO)
         buildConfigField("String", "UPDATE_REPO", "\"ayman708-UX/PlayTorrioTVKT\"")
+        buildConfigField(
+            "String",
+            "SUPABASE_URL",
+            "\"${localProps.getProperty("SUPABASE_URL", "")}\"",
+        )
+        buildConfigField(
+            "String",
+            "SUPABASE_ANON_KEY",
+            "\"${localProps.getProperty("SUPABASE_ANON_KEY", "")}\"",
+        )
     }
 
     signingConfigs {
