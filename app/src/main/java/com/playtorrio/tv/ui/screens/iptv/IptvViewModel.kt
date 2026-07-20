@@ -149,11 +149,12 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         val saved = IptvStore.load(app)
+        val cloudSignedIn = CloudIptvRepository.isSignedIn(app)
         val cloudEmail = CloudIptvRepository.signedInEmail(app).orEmpty()
-        if (saved.isNotEmpty() || cloudEmail.isNotEmpty()) {
+        if (saved.isNotEmpty() || cloudSignedIn) {
             _ui.value = _ui.value.copy(
                 verified = saved,
-                cloudSignedIn = cloudEmail.isNotEmpty(),
+                cloudSignedIn = cloudSignedIn,
                 cloudEmail = cloudEmail,
             )
         }
@@ -386,7 +387,7 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
         val pw = password.trim()
         if (!CloudConfig.isConfigured()) {
             _ui.value = _ui.value.copy(
-                addError = "PlayTorrio Cloud is not configured. Add SUPABASE_URL and SUPABASE_ANON_KEY to local.properties.",
+                addError = "PlayTorrio Cloud is not available.",
             )
             return
         }
@@ -409,7 +410,7 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
                         verified = saved,
                         cloudSignedIn = true,
                         cloudEmail = sync.email,
-                        statusText = "Cloud sync: ${sync.imported} portal(s) added · ${sync.totalSaved} saved.",
+                        statusText = "Cloud sync (profile ${sync.profileId}): ${sync.imported} portal(s) added · ${sync.totalSaved} saved.",
                     )
                 },
                 onFailure = { err ->
@@ -435,7 +436,7 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
                     _ui.value = _ui.value.copy(
                         isAdding = false,
                         verified = saved,
-                        statusText = "Cloud sync: ${sync.imported} portal(s) verified · ${sync.totalSaved} saved.",
+                        statusText = "Cloud sync (profile ${sync.profileId}): ${sync.imported} portal(s) verified · ${sync.totalSaved} saved.",
                     )
                 },
                 onFailure = { err ->

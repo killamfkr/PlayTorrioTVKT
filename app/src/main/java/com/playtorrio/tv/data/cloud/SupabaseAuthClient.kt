@@ -1,5 +1,6 @@
 package com.playtorrio.tv.data.cloud
 
+import android.content.Context
 import android.util.Log
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -62,24 +63,33 @@ object SupabaseAuthClient {
                 Log.w(TAG, "Auth ${resp.code}: $text")
                 throw IllegalStateException(msg)
             }
-            val root = JSONObject(text)
-            val access = root.optString("access_token")
-            val refresh = root.optString("refresh_token")
-            val expiresIn = root.optLong("expires_in", 3600L)
-            val user = root.optJSONObject("user")
-            val userId = user?.optString("id").orEmpty().ifBlank { fallbackUserId }
-            val email = user?.optString("email").orEmpty().ifBlank { fallbackEmail }
-            if (access.isBlank() || refresh.isBlank() || userId.isBlank()) {
-                throw IllegalStateException("Invalid auth response from cloud.")
-            }
-            CloudSession(
-                accessToken = access,
-                refreshToken = refresh,
-                userId = userId,
-                email = email,
-                expiresAtMs = System.currentTimeMillis() + expiresIn * 1000L,
-            )
+            parseSession(JSONObject(text), fallbackEmail, fallbackUserId)
         }
+    }
+
+    private fun parseSession(
+        root: JSONObject,
+        fallbackEmail: String,
+        fallbackUserId: String,
+    ): CloudSession {
+        val access = root.optString("access_token")
+        val refresh = root.optString("refresh_token")
+        val expiresIn = root.optLong("expires_in", 3600L)
+        val user = root.optJSONObject("user")
+        val userId = user?.optString("id").orEmpty()
+            .ifBlank { SupabaseJwt.userIdFromJwt(access).orEmpty() }
+            .ifBlank { fallbackUserId }
+        val email = user?.optString("email").orEmpty().ifBlank { fallbackEmail }
+        if (access.isBlank() || refresh.isBlank() || userId.isBlank()) {
+            throw IllegalStateException("Invalid auth response from cloud.")
+        }
+        return CloudSession(
+            accessToken = access,
+            refreshToken = refresh,
+            userId = userId,
+            email = email,
+            expiresAtMs = System.currentTimeMillis() + expiresIn * 1000L,
+        )
     }
 
     private fun parseAuthError(text: String): String? = runCatching {
@@ -90,9 +100,70 @@ object SupabaseAuthClient {
             ?: root.optString("error").takeIf { it.isNotBlank() }
     }.getOrNull()
 
-    fun getValidSession(ctx: android.content.Context): CloudSession? {
+    fun hasStoredSession(ctx: Context): Boolean {
+        val current = CloudSessionStore.load(ctx) ?: return false
+        return current.accessToken.isNotBlank() || current.refreshToken.isNotBlank()
+    }
+
+    fun getValidSession(ctx: Context): CloudSession? {
         val current = CloudSessionStore.load(ctx) ?: return null
-        if (!current.isExpired()) return current
-        return refresh(current).getOrNull()?.also { CloudSessionStore.save(ctx, it) }
+        if (!SupabaseJwt.isAccessExpired(current.accessToken)) return current
+        CloudSessionStore.clearAccessToken(ctx)
+        val refreshed = refresh(current).getOrElse {
+            signOut(ctx)
+            return null
+        }
+        CloudSessionStore.save(ctx, refreshed)
+        return refreshed
+    }
+
+    fun signOut(ctx: Context) {
+        val session = CloudSessionStore.load(ctx)
+        if (session != null && CloudConfig.isConfigured() && session.accessToken.isNotBlank()) {
+            runCatching {
+                val req = Request.Builder()
+                    .url("${CloudConfig.supabaseUrl}/auth/v1/logout")
+                    .post("".toRequestBody(jsonType))
+                    .header("apikey", CloudConfig.supabaseAnonKey)
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer ${session.accessToken}")
+                    .build()
+                client.newCall(req).execute().close()
+            }
+        }
+        CloudSessionStore.clear(ctx)
+    }
+
+    internal data class RestResponse(val code: Int, val body: String)
+
+    internal fun authorizedGet(ctx: Context, url: String): RestResponse? {
+        var session = getValidSession(ctx) ?: return null
+        var resp = doGet(url, session.accessToken)
+        if (resp.code == 401) {
+            CloudSessionStore.clearAccessToken(ctx)
+            session = getValidSession(ctx) ?: run {
+                signOut(ctx)
+                return null
+            }
+            resp = doGet(url, session.accessToken)
+            if (resp.code == 401) {
+                signOut(ctx)
+                return null
+            }
+        }
+        return resp
+    }
+
+    private fun doGet(url: String, accessToken: String): RestResponse {
+        val req = Request.Builder()
+            .url(url)
+            .get()
+            .header("apikey", CloudConfig.supabaseAnonKey)
+            .header("Authorization", "Bearer $accessToken")
+            .header("Accept", "application/json")
+            .build()
+        return client.newCall(req).execute().use { resp ->
+            RestResponse(resp.code, resp.body?.string().orEmpty())
+        }
     }
 }

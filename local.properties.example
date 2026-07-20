@@ -1,6 +1,7 @@
 # Android SDK path (required by Gradle)
 sdk.dir=/path/to/Android/sdk
 
-# PlayTorrio Cloud (Supabase) — add your project credentials here
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your-anon-key
+# PlayTorrio Cloud (Supabase) — optional overrides.
+# Defaults match PlayTorrioV2 (https://github.com/killamfkr/PlayTorrioV2).
+# SUPABASE_URL=https://lxapazzlduwwecatebti.supabase.co
+# SUPABASE_ANON_KEY=your-legacy-anon-jwt

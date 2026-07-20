@@ -36,6 +36,10 @@ object CloudSessionStore {
             .apply()
     }
 
+    fun clearAccessToken(ctx: Context) {
+        prefs(ctx).edit().remove("access_token").apply()
+    }
+
     fun clear(ctx: Context) {
         prefs(ctx).edit().clear().apply()
     }

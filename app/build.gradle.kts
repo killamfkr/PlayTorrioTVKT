@@ -27,12 +27,12 @@ android {
         buildConfigField(
             "String",
             "SUPABASE_URL",
-            "\"${localProps.getProperty("SUPABASE_URL", "")}\"",
+            "\"${localProps.getProperty("SUPABASE_URL", "https://lxapazzlduwwecatebti.supabase.co")}\"",
         )
         buildConfigField(
             "String",
             "SUPABASE_ANON_KEY",
-            "\"${localProps.getProperty("SUPABASE_ANON_KEY", "")}\"",
+            "\"${localProps.getProperty("SUPABASE_ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx4YXBhenpsZHV3d2VjYXRlYnRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyOTI2NDQsImV4cCI6MjA5Mjg2ODY0NH0.a9e7zUEdWDmf4Qor-rbYZ6G0sMTEYcfKnwTrXjVrBWY")}\"",
         )
     }
 
