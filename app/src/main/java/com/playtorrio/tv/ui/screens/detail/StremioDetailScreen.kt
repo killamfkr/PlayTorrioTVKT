@@ -75,6 +75,22 @@ fun StremioDetailScreen(
         }
     }
 
+    // Auto-play first playable addon stream when enabled in settings.
+    LaunchedEffect(state.autoPlayStream) {
+        val stream = state.autoPlayStream ?: return@LaunchedEffect
+        val launched = AddonStreamLauncher.launchStream(
+            context = context,
+            stream = stream,
+            meta = state.meta,
+            type = type,
+            stremioId = stremioId,
+        )
+        viewModel.clearAutoPlayStream()
+        if (!launched) {
+            viewModel.showStreamPickerFallback()
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()

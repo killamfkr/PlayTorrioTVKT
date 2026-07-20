@@ -912,6 +912,19 @@ fun SettingsScreen(navController: NavController) {
 
             Spacer(Modifier.height(20.dp))
 
+            var addonAutoplay by remember { mutableStateOf(AppPreferences.addonAutoplay) }
+            SettingsToggleRow(
+                title = "Auto-play Addon Streams",
+                description = "Skip the stream picker and play the first available source automatically",
+                checked = addonAutoplay,
+                onCheckedChange = {
+                    addonAutoplay = it
+                    AppPreferences.addonAutoplay = it
+                }
+            )
+
+            Spacer(Modifier.height(20.dp))
+
             // Installed addons list
             if (addons.isEmpty()) {
                 Text(

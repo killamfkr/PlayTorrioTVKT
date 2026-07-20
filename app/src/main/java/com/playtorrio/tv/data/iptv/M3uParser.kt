@@ -27,8 +27,13 @@ object M3uParser {
 
     /** In-memory cache: playlist URL → parsed channels. */
     private val cache = mutableMapOf<String, List<IptvStream>>()
+    private val headerCache = mutableMapOf<String, Header>()
 
-    data class Header(val playlistName: String?)
+    data class Header(
+        val playlistName: String?,
+        /** XMLTV URL from `url-tvg` on the #EXTM3U line. */
+        val urlTvg: String? = null,
+    )
 
     /**
      * Fetch and parse the playlist. Returns null on network failure or if the
@@ -42,6 +47,7 @@ object M3uParser {
         }
         val parsed = parse(text)
         cache[url] = parsed.second
+        headerCache[url] = parsed.first
         return parsed
     }
 
@@ -51,22 +57,33 @@ object M3uParser {
         return fetchAndParse(url)?.second ?: emptyList()
     }
 
+    /** Cached playlist header (name + EPG URL). Fetches the playlist if needed. */
+    fun getHeader(url: String): Header? {
+        headerCache[url]?.let { return it }
+        fetchAndParse(url)
+        return headerCache[url]
+    }
+
     fun parse(text: String): Pair<Header, List<IptvStream>> {
         var playlistName: String? = null
+        var urlTvg: String? = null
         val out = mutableListOf<IptvStream>()
         var pendingName: String? = null
         var pendingGroup = ""
         var pendingLogo = ""
+        var pendingTvgId = ""
         var idx = 0
         for (raw in text.lineSequence().map { it.trim() }) {
             if (raw.isEmpty()) continue
             if (raw.startsWith("#EXTM3U", true)) {
-                playlistName = attr(raw, "x-tvg-name") ?: attr(raw, "url-tvg")
+                playlistName = attr(raw, "x-tvg-name")
+                urlTvg = attr(raw, "url-tvg")
                 continue
             }
             if (raw.startsWith("#EXTINF", true)) {
                 pendingGroup = attr(raw, "group-title").orEmpty()
                 pendingLogo = attr(raw, "tvg-logo").orEmpty()
+                pendingTvgId = attr(raw, "tvg-id").orEmpty()
                 pendingName = raw.substringAfterLast(',', "").trim().ifEmpty {
                     attr(raw, "tvg-name") ?: "Channel"
                 }
@@ -88,11 +105,13 @@ object M3uParser {
                 containerExt = safeExt,
                 kind = "live",
                 directUrl = raw,
+                epgChannelId = pendingTvgId,
             )
             pendingGroup = ""
             pendingLogo = ""
+            pendingTvgId = ""
         }
-        return Header(playlistName) to out
+        return Header(playlistName = playlistName, urlTvg = urlTvg) to out
     }
 
     /** Extract `key="value"` from an #EXTINF line. */

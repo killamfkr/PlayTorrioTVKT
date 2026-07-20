@@ -20,6 +20,7 @@ object AppPreferences {
     private const val KEY_TORRENT_DISABLE_IPV6 = "torrent_disable_ipv6"
     private const val KEY_TRAILER_AUTOPLAY = "trailer_autoplay"
     private const val KEY_TRAILER_DELAY_SEC = "trailer_delay_sec"
+    private const val KEY_ADDON_AUTOPLAY = "addon_autoplay"
     private const val KEY_STREAMING_SOURCE_ORDER = "streaming_source_order"
     private const val KEY_STREAMING_EXTRACT_TIMEOUT_SEC = "streaming_extract_timeout_sec"
     private const val KEY_SAVED_ALBUM_IDS = "saved_album_ids"
@@ -99,6 +100,11 @@ object AppPreferences {
     var trailerDelaySec: Int
         get() = prefs.getInt(KEY_TRAILER_DELAY_SEC, 3)
         set(value) = prefs.edit().putInt(KEY_TRAILER_DELAY_SEC, value.coerceIn(3, 10)).apply()
+
+    /** When enabled, addon detail screens auto-play the first playable stream. */
+    var addonAutoplay: Boolean
+        get() = prefs.getBoolean(KEY_ADDON_AUTOPLAY, true)
+        set(value) = prefs.edit().putBoolean(KEY_ADDON_AUTOPLAY, value).apply()
 
     /**
      * Ordered list of streaming source indices (highest priority first).

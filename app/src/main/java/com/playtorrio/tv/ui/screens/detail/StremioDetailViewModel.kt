@@ -3,6 +3,7 @@ package com.playtorrio.tv.ui.screens.detail
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.playtorrio.tv.data.AppPreferences
 import com.playtorrio.tv.data.api.TmdbClient
 import com.playtorrio.tv.data.stremio.StremioAddonRepository
 import com.playtorrio.tv.data.stremio.StremioMeta
@@ -24,6 +25,8 @@ data class StremioDetailUiState(
     val showStreamOverlay: Boolean = false,
     val selectedVideoId: String? = null,
     val selectedVideoTitle: String? = null,
+    // Auto-play: set when a stream should launch immediately
+    val autoPlayStream: StremioStream? = null,
     // Season grouping (series only)
     val selectedSeason: Int = 1,
     // TMDB redirect — if set, the screen should navigate to this route
@@ -124,6 +127,7 @@ class StremioDetailViewModel : ViewModel() {
                             streams = fallbackStreams,
                             isLoadingStreams = false
                         )
+                        maybeAutoPlay(fallbackStreams)
                     } else {
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
@@ -170,6 +174,7 @@ class StremioDetailViewModel : ViewModel() {
                     streams = streams,
                     isLoadingStreams = false
                 )
+                maybeAutoPlay(streams)
             } catch (e: Exception) {
                 Log.e("StremioDetailVM", "Failed to load streams", e)
                 _uiState.value = _uiState.value.copy(isLoadingStreams = false)
@@ -231,6 +236,7 @@ class StremioDetailViewModel : ViewModel() {
                 streams = inlineStreams,
                 isLoadingStreams = false
             )
+            maybeAutoPlay(inlineStreams)
             return
         }
         loadStreams(video.id, video.title)
@@ -241,6 +247,25 @@ class StremioDetailViewModel : ViewModel() {
             showStreamOverlay = false,
             streams = emptyList(),
             isLoadingStreams = false
+        )
+    }
+
+    fun clearAutoPlayStream() {
+        _uiState.value = _uiState.value.copy(autoPlayStream = null)
+    }
+
+    fun showStreamPickerFallback() {
+        _uiState.value = _uiState.value.copy(showStreamOverlay = true)
+    }
+
+    private fun maybeAutoPlay(streams: List<StremioStream>) {
+        if (!AppPreferences.addonAutoplay || streams.isEmpty()) return
+        val best = AddonStreamLauncher.pickBestStream(streams) ?: return
+        _uiState.value = _uiState.value.copy(
+            showStreamOverlay = false,
+            streams = streams,
+            isLoadingStreams = false,
+            autoPlayStream = best,
         )
     }
 

@@ -40,6 +40,8 @@ data class IptvStream(
     val kind: String,
     /** When non-empty, used directly as the playable URL (M3U entries). */
     val directUrl: String = "",
+    /** XMLTV / tvg-id / Xtream epg_channel_id for programme matching. */
+    val epgChannelId: String = "",
 )
 
 enum class IptvSection { LIVE, VOD, SERIES }

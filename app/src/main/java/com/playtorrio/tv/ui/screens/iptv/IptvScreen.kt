@@ -84,6 +84,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -94,6 +97,8 @@ import com.playtorrio.tv.data.iptv.IptvClient
 import com.playtorrio.tv.data.iptv.IptvSection
 import com.playtorrio.tv.data.iptv.IptvStream
 import com.playtorrio.tv.data.iptv.VerifiedPortal
+import com.playtorrio.tv.data.iptv.GuideChannel
+import com.playtorrio.tv.data.iptv.EpgProgram
 import com.playtorrio.tv.data.iptv.HardcodedChannel
 import com.playtorrio.tv.data.iptv.HardcodedChannels
 
@@ -188,6 +193,7 @@ fun IptvScreen(navController: NavController) {
                 IptvView.EPISODE_LIST -> EpisodeListView(state, vm)
                 IptvView.CHANNELS_HUB -> ChannelsHubView(state, vm)
                 IptvView.CHANNEL_RESULTS -> ChannelResultsView(state, vm)
+                IptvView.TV_GUIDE -> TvGuideView(state, vm)
             }
         }
     }
@@ -1251,6 +1257,14 @@ private fun SectionPickView(state: IptvUiState, vm: IptvViewModel) {
                     .weight(1f)
                     .focusRequester(firstFocus),
                 onClick = { vm.openSection(IptvSection.LIVE) },
+            )
+            HeroTile(
+                icon = Icons.Filled.Schedule,
+                label = "TV GUIDE",
+                hint = "EPG schedule",
+                gradient = listOf(Color(0xFF0EA5E9), Color(0xFF6366F1)),
+                modifier = Modifier.weight(1f),
+                onClick = { vm.openTvGuide() },
             )
             if (portal.portal.kind != "m3u") {
                 HeroTile(
@@ -2607,6 +2621,349 @@ private fun GetMoreChannelsButton(
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
             )
+        }
+    }
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// TV Guide (EPG)
+// ───────────────────────────────────────────────────────────────────────
+
+private val GuideTimeFmt = SimpleDateFormat("h:mm a", Locale.getDefault())
+
+private fun formatGuideTime(ms: Long): String =
+    if (ms <= 0L) "—" else GuideTimeFmt.format(Date(ms))
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun TvGuideView(state: IptvUiState, vm: IptvViewModel) {
+    val ctx = LocalContext.current
+    val portal = state.activePortal ?: return
+    val channelFocus = remember { FocusRequester() }
+    val query = state.guideSearch.trim().lowercase()
+    val filtered = if (query.isEmpty()) state.guideChannels
+    else state.guideChannels.filter {
+        it.channelName.lowercase().contains(query) ||
+            it.now?.title?.lowercase()?.contains(query) == true
+    }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(horizontal = 48.dp, vertical = 32.dp)
+    ) {
+        Header(
+            title = "TV Guide",
+            subtitle = portal.name,
+            onBack = { vm.back() },
+        )
+        Spacer(Modifier.height(16.dp))
+
+        if (state.isGuideLoading) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(color = Accent, modifier = Modifier.size(36.dp))
+                    Spacer(Modifier.height(16.dp))
+                    Text("Loading programme guide…", color = TextDim, fontSize = 14.sp)
+                }
+            }
+            return
+        }
+
+        state.guideError?.let { err ->
+            Text(err, color = Color(0xFFF87171), fontSize = 13.sp)
+            Spacer(Modifier.height(8.dp))
+        }
+
+        OutlinedTextField(
+            value = state.guideSearch,
+            onValueChange = { vm.setGuideSearch(it) },
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("Search channels or shows…", color = TextDim2) },
+            leadingIcon = {
+                Icon(Icons.Filled.Search, contentDescription = null, tint = TextDim)
+            },
+            singleLine = true,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Accent,
+                unfocusedBorderColor = Stroke,
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White,
+            ),
+        )
+        Spacer(Modifier.height(16.dp))
+
+        Row(
+            Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            // Channel list with Now/Next
+            LazyColumn(
+                modifier = Modifier
+                    .weight(0.42f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Surface1)
+                    .border(1.dp, Stroke, RoundedCornerShape(14.dp))
+                    .padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(filtered, key = { it.stream.streamId }) { ch ->
+                    val idx = filtered.indexOf(ch)
+                    GuideChannelRow(
+                        channel = ch,
+                        selected = state.selectedGuideChannel?.stream?.streamId == ch.stream.streamId,
+                        focusRequester = if (idx == 0) channelFocus else null,
+                        onClick = { vm.selectGuideChannel(ch) },
+                        onPlay = {
+                            playStream(ctx, portal, ch.stream)
+                        },
+                    )
+                }
+            }
+
+            // Programme schedule for selected channel
+            val selected = state.selectedGuideChannel
+            Column(
+                Modifier
+                    .weight(0.58f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Surface1)
+                    .border(1.dp, Stroke, RoundedCornerShape(14.dp))
+                    .padding(16.dp),
+            ) {
+                if (selected == null) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Select a channel", color = TextDim)
+                    }
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (selected.icon.isNotBlank()) {
+                            AsyncImage(
+                                model = selected.icon,
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(8.dp)),
+                                contentScale = ContentScale.Fit,
+                            )
+                            Spacer(Modifier.width(12.dp))
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                selected.channelName,
+                                color = Color.White,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            selected.now?.let { now ->
+                                Text(
+                                    "Now: ${now.title}",
+                                    color = AccentSoft,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                        Card(
+                            onClick = { playStream(ctx, portal, selected.stream) },
+                            colors = CardDefaults.colors(containerColor = Accent.copy(alpha = 0.25f)),
+                            shape = CardDefaults.shape(RoundedCornerShape(8.dp)),
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    Icons.Filled.PlayArrow,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text("Watch", color = Color.White, fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        "Schedule",
+                        color = TextDim,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(8.dp))
+
+                    if (state.guidePrograms.isEmpty()) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                            Text(
+                                "No programme data for this channel.",
+                                color = TextDim2,
+                                fontSize = 13.sp,
+                            )
+                        }
+                    } else {
+                        val nowMs = System.currentTimeMillis()
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxSize(),
+                        ) {
+                            items(state.guidePrograms, key = { "${it.startMs}_${it.title}" }) { prog ->
+                                GuideProgramRow(prog, isNow = prog.isNow(nowMs))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        runCatching { channelFocus.requestFocus() }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun GuideChannelRow(
+    channel: GuideChannel,
+    selected: Boolean,
+    focusRequester: FocusRequester?,
+    onClick: () -> Unit,
+    onPlay: () -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    Card(
+        onClick = {
+            onClick()
+            onPlay()
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .onFocusChanged { focused = it.isFocused },
+        colors = CardDefaults.colors(
+            containerColor = when {
+                focused -> Accent.copy(alpha = 0.2f)
+                selected -> Surface2
+                else -> Color.Transparent
+            },
+        ),
+        shape = CardDefaults.shape(RoundedCornerShape(10.dp)),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (channel.icon.isNotBlank()) {
+                AsyncImage(
+                    model = channel.icon,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(6.dp)),
+                    contentScale = ContentScale.Fit,
+                )
+                Spacer(Modifier.width(8.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    channel.channelName,
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val subtitle = channel.now?.title ?: channel.next?.title
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        subtitle,
+                        color = if (channel.now != null) AccentSoft else TextDim,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (channel.now != null) {
+                Text(
+                    "LIVE",
+                    color = Color(0xFFEF4444),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFFEF4444).copy(alpha = 0.15f))
+                        .padding(horizontal = 5.dp, vertical = 2.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun GuideProgramRow(program: EpgProgram, isNow: Boolean) {
+    val bg = if (isNow) Accent.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.04f)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(bg)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Column(Modifier.width(90.dp)) {
+            Text(
+                formatGuideTime(program.startMs),
+                color = if (isNow) AccentSoft else TextDim,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                formatGuideTime(program.endMs),
+                color = TextDim2,
+                fontSize = 10.sp,
+            )
+        }
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    program.title,
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = if (isNow) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (isNow) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "NOW",
+                        color = AccentSoft,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+            if (program.description.isNotBlank()) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    program.description,
+                    color = TextDim,
+                    fontSize = 11.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }

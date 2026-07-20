@@ -16,6 +16,11 @@ import com.playtorrio.tv.data.iptv.VerifiedPortal
 import com.playtorrio.tv.data.iptv.IptvAliveChecker
 import com.playtorrio.tv.data.iptv.IptvAliveStore
 import com.playtorrio.tv.data.iptv.IptvChannelResultsStore
+import com.playtorrio.tv.data.iptv.EpgClient
+import com.playtorrio.tv.data.iptv.EpgGuide
+import com.playtorrio.tv.data.iptv.EpgProgram
+import com.playtorrio.tv.data.iptv.EpgStore
+import com.playtorrio.tv.data.iptv.GuideChannel
 import com.playtorrio.tv.data.iptv.HardcodedChannel
 import com.playtorrio.tv.data.iptv.HardcodedChannels
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +47,7 @@ enum class IptvView {
     EPISODE_LIST,
     CHANNELS_HUB,
     CHANNEL_RESULTS,
+    TV_GUIDE,
 }
 
 /** Sentinel id meaning "all categories" in the browser sidebar. */
@@ -98,6 +104,15 @@ data class IptvUiState(
     val channelStatus: String = "",
     val channelIsRunning: Boolean = false,
     val channelResults: List<ChannelHit> = emptyList(),
+
+    // TV Guide (EPG)
+    val isGuideLoading: Boolean = false,
+    val guideError: String? = null,
+    val guideChannels: List<GuideChannel> = emptyList(),
+    val guidePrograms: List<EpgProgram> = emptyList(),
+    val selectedGuideChannel: GuideChannel? = null,
+    val guideSearch: String = "",
+    val epgGuide: EpgGuide? = null,
 )
 
 /** A single alive stream found while resolving a HardcodedChannel. */
@@ -116,6 +131,7 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
     private var browseJob: Job? = null
     private var aliveJob: Job? = null
     private var channelJob: Job? = null
+    private var guideJob: Job? = null
 
     private var scrapedAll: List<IptvPortal> = emptyList()
     private val attempted = mutableSetOf<String>()
@@ -431,6 +447,68 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
             episodes = emptyList(),
             error = null,
         )
+    }
+
+    fun openTvGuide() {
+        val portal = _ui.value.activePortal ?: return
+        guideJob?.cancel()
+        _ui.value = _ui.value.copy(
+            view = IptvView.TV_GUIDE,
+            isGuideLoading = true,
+            guideError = null,
+            guideChannels = emptyList(),
+            guidePrograms = emptyList(),
+            selectedGuideChannel = null,
+            guideSearch = "",
+            epgGuide = null,
+        )
+        guideJob = viewModelScope.launch(Dispatchers.IO) {
+            val streams = runCatching {
+                IptvClient.streams(portal.portal, IptvSection.LIVE, "")
+            }.getOrDefault(emptyList()).filter { it.kind == "live" }
+
+            if (streams.isEmpty()) {
+                _ui.value = _ui.value.copy(
+                    isGuideLoading = false,
+                    guideError = "No live channels found for this portal.",
+                )
+                return@launch
+            }
+
+            val cached = EpgStore.load(getApplication(), portal.portal)
+            val guide = cached ?: EpgClient.loadGuide(portal.portal, streams)
+            if (guide != null && cached == null) {
+                EpgStore.save(getApplication(), portal.portal, guide)
+            }
+
+            val channels = EpgClient.buildGuideChannels(streams, guide)
+            val first = channels.firstOrNull()
+            val programs = first?.epgId?.let { guide?.programsFor(it) }.orEmpty()
+
+            _ui.value = _ui.value.copy(
+                isGuideLoading = false,
+                guideChannels = channels,
+                selectedGuideChannel = first,
+                guidePrograms = programs,
+                epgGuide = guide,
+                guideError = if (guide == null) "EPG not available for this source." else null,
+            )
+        }
+    }
+
+    fun selectGuideChannel(channel: GuideChannel) {
+        val guide = _ui.value.epgGuide
+        val programs = if (channel.epgId.isNotEmpty()) {
+            guide?.programsFor(channel.epgId).orEmpty()
+        } else emptyList()
+        _ui.value = _ui.value.copy(
+            selectedGuideChannel = channel,
+            guidePrograms = programs,
+        )
+    }
+
+    fun setGuideSearch(query: String) {
+        _ui.value = _ui.value.copy(guideSearch = query)
     }
 
     fun openSection(section: IptvSection) {
@@ -986,6 +1064,20 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
                     channelResults = emptyList(),
                     channelStatus = "",
                     channelIsRunning = false,
+                )
+                true
+            }
+            IptvView.TV_GUIDE -> {
+                guideJob?.cancel()
+                _ui.value = s.copy(
+                    view = IptvView.SECTION_PICK,
+                    isGuideLoading = false,
+                    guideChannels = emptyList(),
+                    guidePrograms = emptyList(),
+                    selectedGuideChannel = null,
+                    guideSearch = "",
+                    epgGuide = null,
+                    guideError = null,
                 )
                 true
             }

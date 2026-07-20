@@ -137,6 +137,9 @@ object IptvClient {
                         IptvSection.VOD -> "vod"
                         IptvSection.SERIES -> "series"
                     },
+                    epgChannelId = o.optString("epg_channel_id")
+                        .ifEmpty { o.optString("channel_id") }
+                        .ifEmpty { if (kind == IptvSection.LIVE) id else "" },
                 )
             }
         }.getOrElse { emptyList() }
