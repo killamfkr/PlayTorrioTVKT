@@ -115,6 +115,11 @@ object StremioAddonRepository {
         saveAddons(current)
     }
 
+    /** Replaces the full addon list (e.g. after cloud sync). */
+    suspend fun replaceAllAddons(addons: List<InstalledAddon>) = withContext(Dispatchers.IO) {
+        saveAddons(addons)
+    }
+
     // ── Persist ───────────────────────────────────────────────────────────────
 
     private fun saveAddons(addons: List<InstalledAddon>) {

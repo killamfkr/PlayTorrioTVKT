@@ -228,4 +228,8 @@ object WatchProgressStore {
         persist(list)
         return list
     }
+
+    fun replaceAll(list: List<WatchProgress>) {
+        persist(list.sortedByDescending { it.updatedAt })
+    }
 }

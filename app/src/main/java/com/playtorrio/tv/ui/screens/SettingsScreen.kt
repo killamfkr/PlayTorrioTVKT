@@ -55,6 +55,7 @@ import com.playtorrio.tv.data.stremio.StremioAddonRepository
 import com.playtorrio.tv.server.DeviceIpAddress
 import com.playtorrio.tv.server.QrCodeGenerator
 import com.playtorrio.tv.server.SettingsConfigServer
+import com.playtorrio.tv.ui.screens.settings.PlayTorrioCloudAccountSection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -200,6 +201,10 @@ fun SettingsScreen(navController: NavController) {
             )
 
             Spacer(Modifier.height(40.dp))
+
+            PlayTorrioCloudAccountSection(
+                onAddonsChanged = { addons = StremioAddonRepository.getAddons() },
+            )
 
             // Section header
             Text(

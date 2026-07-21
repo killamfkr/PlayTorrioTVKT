@@ -136,6 +136,33 @@ object SupabaseAuthClient {
 
     internal data class RestResponse(val code: Int, val body: String)
 
+    internal fun authorizedRequest(ctx: Context, request: Request): RestResponse? {
+        var session = getValidSession(ctx) ?: return null
+        var resp = executeWithToken(request, session.accessToken)
+        if (resp.code == 401) {
+            CloudSessionStore.clearAccessToken(ctx)
+            session = getValidSession(ctx) ?: run {
+                signOut(ctx)
+                return null
+            }
+            resp = executeWithToken(request, session.accessToken)
+            if (resp.code == 401) {
+                signOut(ctx)
+                return null
+            }
+        }
+        return resp
+    }
+
+    private fun executeWithToken(request: Request, accessToken: String): RestResponse {
+        val authed = request.newBuilder()
+            .header("Authorization", "Bearer $accessToken")
+            .build()
+        return client.newCall(authed).execute().use { resp ->
+            RestResponse(resp.code, resp.body?.string().orEmpty())
+        }
+    }
+
     internal fun authorizedGet(ctx: Context, url: String): RestResponse? {
         var session = getValidSession(ctx) ?: return null
         var resp = doGet(url, session.accessToken)

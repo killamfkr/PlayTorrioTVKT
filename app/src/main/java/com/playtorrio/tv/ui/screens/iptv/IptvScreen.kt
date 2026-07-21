@@ -193,7 +193,7 @@ fun IptvScreen(navController: NavController) {
                 }
         ) {
             when (state.view) {
-                IptvView.PORTAL_LIST -> PortalListView(state, vm) { navController.popBackStack() }
+                IptvView.PORTAL_LIST -> PortalListView(state, vm, navController) { navController.popBackStack() }
                 IptvView.SECTION_PICK -> SectionPickView(state, vm)
                 IptvView.BROWSER -> BrowserView(state, vm)
                 IptvView.EPISODE_LIST -> EpisodeListView(state, vm)
@@ -211,7 +211,12 @@ fun IptvScreen(navController: NavController) {
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun PortalListView(state: IptvUiState, vm: IptvViewModel, onBack: () -> Unit) {
+private fun PortalListView(
+    state: IptvUiState,
+    vm: IptvViewModel,
+    navController: NavController,
+    onBack: () -> Unit,
+) {
     val firstFocus = remember { FocusRequester() }
     Column(
         Modifier
@@ -266,7 +271,7 @@ private fun PortalListView(state: IptvUiState, vm: IptvViewModel, onBack: () -> 
                 signedIn = state.cloudSignedIn,
                 email = state.cloudEmail,
                 isBusy = state.isAdding,
-                onLogin = { vm.openAddDialog() },
+                onSignIn = { navController.navigate("settings") },
                 onSync = { vm.syncCloud() },
                 onSignOut = { vm.signOutCloud() },
             )
@@ -330,15 +335,14 @@ private fun PortalListView(state: IptvUiState, vm: IptvViewModel, onBack: () -> 
         AddPortalDialog(
             isAdding = state.isAdding,
             error = state.addError,
-            cloudConfigured = state.cloudConfigured,
             onDismiss = { vm.dismissAddDialog() },
             onSubmitXtream = { url, user, pass -> vm.addManual(url, user, pass) },
             onSubmitM3u = { url, name -> vm.addM3u(url, name) },
-            onSubmitCloud = { email, pass -> vm.loginCloud(email, pass) },
         )
     }
 
     LaunchedEffect(Unit) {
+        vm.refreshCloudAccountState()
         runCatching { firstFocus.requestFocus() }
     }
 }
@@ -429,7 +433,7 @@ private fun CloudAccountBar(
     signedIn: Boolean,
     email: String,
     isBusy: Boolean,
-    onLogin: () -> Unit,
+    onSignIn: () -> Unit,
     onSync: () -> Unit,
     onSignOut: () -> Unit,
 ) {
@@ -455,11 +459,11 @@ private fun CloudAccountBar(
                 when {
                     signedIn && email.isNotBlank() -> email
                     signedIn -> "Signed in"
-                    else -> "Sign in to sync IPTV portals from your cloud account"
+                    else -> "Sign in via Settings → PlayTorrio Cloud to sync IPTV portals"
                 },
                 color = TextDim,
                 fontSize = 11.sp,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
@@ -468,7 +472,7 @@ private fun CloudAccountBar(
             Spacer(Modifier.width(8.dp))
             GhostButton("Sign out", onClick = { if (!isBusy) onSignOut() })
         } else {
-            PrimaryButton(label = "Sign in", enabled = !isBusy, onClick = onLogin)
+            PrimaryButton(label = "Settings", enabled = !isBusy, onClick = onSignIn)
         }
     }
 }
@@ -478,21 +482,17 @@ private fun CloudAccountBar(
 private fun AddPortalDialog(
     isAdding: Boolean,
     error: String?,
-    cloudConfigured: Boolean,
     onDismiss: () -> Unit,
     onSubmitXtream: (String, String, String) -> Unit,
     onSubmitM3u: (String, String) -> Unit,
-    onSubmitCloud: (String, String) -> Unit,
 ) {
-    // 0 = Xtream, 1 = M3U playlist, 2 = PlayTorrio Cloud
-    var mode by remember { mutableStateOf(if (cloudConfigured) 2 else 0) }
+    // 0 = Xtream, 1 = M3U playlist
+    var mode by remember { mutableStateOf(0) }
     var url by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var m3uUrl by remember { mutableStateOf("") }
     var m3uName by remember { mutableStateOf("") }
-    var cloudEmail by remember { mutableStateOf("") }
-    var cloudPassword by remember { mutableStateOf("") }
     val urlFocus = remember { FocusRequester() }
     val userFocus = remember { FocusRequester() }
     val passFocus = remember { FocusRequester() }
@@ -502,9 +502,6 @@ private fun AddPortalDialog(
     val cancelFocus = remember { FocusRequester() }
     val xtreamTabFocus = remember { FocusRequester() }
     val m3uTabFocus = remember { FocusRequester() }
-    val cloudTabFocus = remember { FocusRequester() }
-    val cloudEmailFocus = remember { FocusRequester() }
-    val cloudPassFocus = remember { FocusRequester() }
 
     val cfg = androidx.compose.ui.platform.LocalConfiguration.current
     val dialogWidth = cfg.screenWidthDp.dp.coerceAtMost(560.dp) * 0.85f
@@ -563,8 +560,7 @@ private fun AddPortalDialog(
                         Text(
                             when (mode) {
                                 0 -> "Enter your Xtream-Codes credentials"
-                                1 -> "Paste your M3U playlist URL"
-                                else -> "Sign in with your PlayTorrio Cloud account"
+                                else -> "Paste your M3U playlist URL"
                             },
                             color = TextDim,
                             fontSize = 12.sp,
@@ -593,11 +589,7 @@ private fun AddPortalDialog(
                         onDpadLeft = null,
                         onDpadDown = {
                             runCatching {
-                                when (mode) {
-                                    0 -> urlFocus.requestFocus()
-                                    1 -> m3uUrlFocus.requestFocus()
-                                    else -> cloudEmailFocus.requestFocus()
-                                }
+                                if (mode == 0) urlFocus.requestFocus() else m3uUrlFocus.requestFocus()
                             }
                         },
                         modifier = Modifier.weight(1f),
@@ -608,34 +600,15 @@ private fun AddPortalDialog(
                         enabled = !isAdding,
                         focusRequester = m3uTabFocus,
                         onClick = { mode = 1 },
-                        onDpadRight = {
-                            if (cloudConfigured) runCatching { cloudTabFocus.requestFocus() }
-                        },
+                        onDpadRight = null,
                         onDpadLeft = { runCatching { xtreamTabFocus.requestFocus() } },
                         onDpadDown = {
                             runCatching {
-                                when (mode) {
-                                    0 -> urlFocus.requestFocus()
-                                    1 -> m3uUrlFocus.requestFocus()
-                                    else -> cloudEmailFocus.requestFocus()
-                                }
+                                if (mode == 0) urlFocus.requestFocus() else m3uUrlFocus.requestFocus()
                             }
                         },
                         modifier = Modifier.weight(1f),
                     )
-                    if (cloudConfigured) {
-                        ModeTab(
-                            label = "Cloud",
-                            selected = mode == 2,
-                            enabled = !isAdding,
-                            focusRequester = cloudTabFocus,
-                            onClick = { mode = 2 },
-                            onDpadRight = null,
-                            onDpadLeft = { runCatching { m3uTabFocus.requestFocus() } },
-                            onDpadDown = { runCatching { cloudEmailFocus.requestFocus() } },
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
                 }
 
                 Spacer(Modifier.height(16.dp))
@@ -699,37 +672,6 @@ private fun AddPortalDialog(
                         onDpadUp = { runCatching { m3uUrlFocus.requestFocus() } },
                     )
                     }
-                    else -> {
-                        DialogField(
-                            label = "Email",
-                            placeholder = "you@example.com",
-                            value = cloudEmail,
-                            onChange = { cloudEmail = it },
-                            enabled = !isAdding,
-                            focusRequester = cloudEmailFocus,
-                            onDpadDown = { runCatching { cloudPassFocus.requestFocus() } },
-                            onDpadUp = { runCatching { cloudTabFocus.requestFocus() } },
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        DialogField(
-                            label = "Password",
-                            placeholder = "password",
-                            value = cloudPassword,
-                            onChange = { cloudPassword = it },
-                            enabled = !isAdding,
-                            isPassword = true,
-                            focusRequester = cloudPassFocus,
-                            onDpadDown = { runCatching { addFocus.requestFocus() } },
-                            onDpadUp = { runCatching { cloudEmailFocus.requestFocus() } },
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "Your IPTV portals will be pulled from PlayTorrio Cloud and verified automatically.",
-                            color = TextDim2,
-                            fontSize = 11.sp,
-                            lineHeight = 15.sp,
-                        )
-                    }
                 }
 
                 if (!error.isNullOrEmpty()) {
@@ -769,11 +711,7 @@ private fun AddPortalDialog(
                         )
                         Spacer(Modifier.width(12.dp))
                         Text(
-                            when (mode) {
-                                0 -> "Verifying…"
-                                1 -> "Loading playlist…"
-                                else -> "Signing in…"
-                            },
+                            if (mode == 0) "Verifying…" else "Loading playlist…",
                             color = TextDim,
                             fontSize = 12.sp,
                             modifier = Modifier.weight(1f),
@@ -789,40 +727,25 @@ private fun AddPortalDialog(
                             .onPreviewKeyEvent { ev ->
                                 if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionUp) {
                                     runCatching {
-                                        when (mode) {
-                                            0 -> passFocus.requestFocus()
-                                            1 -> m3uNameFocus.requestFocus()
-                                            else -> cloudPassFocus.requestFocus()
-                                        }
+                                        if (mode == 0) passFocus.requestFocus() else m3uNameFocus.requestFocus()
                                     }; true
                                 } else false
                             },
                     )
                     Spacer(Modifier.width(10.dp))
                     PrimaryButton(
-                        label = when {
-                            isAdding -> "Adding…"
-                            mode == 2 -> "Sign in"
-                            else -> "Add"
-                        },
+                        label = if (isAdding) "Adding…" else "Add",
                         enabled = !isAdding,
                         onClick = {
-                            when (mode) {
-                                0 -> onSubmitXtream(url, username, password)
-                                1 -> onSubmitM3u(m3uUrl, m3uName)
-                                else -> onSubmitCloud(cloudEmail, cloudPassword)
-                            }
+                            if (mode == 0) onSubmitXtream(url, username, password)
+                            else onSubmitM3u(m3uUrl, m3uName)
                         },
                         modifier = Modifier
                             .focusRequester(addFocus)
                             .onPreviewKeyEvent { ev ->
                                 if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionUp) {
                                     runCatching {
-                                        when (mode) {
-                                            0 -> passFocus.requestFocus()
-                                            1 -> m3uNameFocus.requestFocus()
-                                            else -> cloudPassFocus.requestFocus()
-                                        }
+                                        if (mode == 0) passFocus.requestFocus() else m3uNameFocus.requestFocus()
                                     }; true
                                 } else false
                             },
