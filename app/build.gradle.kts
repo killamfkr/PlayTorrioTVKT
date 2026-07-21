@@ -19,8 +19,8 @@ android {
         applicationId = "com.playtorrio.tv"
         minSdk = 23
         targetSdk = 35
-        versionCode = 8
-        versionName = "1.0.7"
+        versionCode = 9
+        versionName = "1.0.8"
 
         // GitHub repo used by the in-app updater (UpdateService reads BuildConfig.UPDATE_REPO)
         buildConfigField("String", "UPDATE_REPO", "\"killamfkr/PlayTorrioTVKT\"")
