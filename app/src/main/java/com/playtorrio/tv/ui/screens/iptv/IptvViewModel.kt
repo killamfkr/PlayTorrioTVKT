@@ -56,6 +56,9 @@ enum class IptvView {
 /** Sentinel id meaning "all categories" in the browser sidebar. */
 const val LIVE_ALL_CATEGORY_ID = "__all__"
 
+/** Sidebar category showing only starred live channels. */
+const val LIVE_FAVORITES_CATEGORY_ID = "__favorites__"
+
 private fun keyOf(p: IptvPortal): String =
     "${p.url}|${p.username}|${p.password}".lowercase()
 private fun keyOf(v: VerifiedPortal): String = keyOf(v.portal)
@@ -116,7 +119,8 @@ data class IptvUiState(
     val selectedGuideChannel: GuideChannel? = null,
     val guideSearch: String = "",
     val epgGuide: EpgGuide? = null,
-    val guideFavoriteIds: Set<String> = emptySet(),
+    /** Starred live stream ids for the active portal (guide + Live TV browser). */
+    val favoriteStreamIds: Set<String> = emptySet(),
     val guideFavoritesOnly: Boolean = false,
 
     // PlayTorrio Cloud (Supabase)
@@ -555,8 +559,8 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
             selectedGuideChannel = null,
             guideSearch = "",
             epgGuide = null,
-            guideFavoriteIds = IptvFavoritesStore.loadIds(getApplication(), keyOf(portal)),
             guideFavoritesOnly = false,
+            favoriteStreamIds = IptvFavoritesStore.loadIds(getApplication(), keyOf(portal)),
         )
         guideJob = viewModelScope.launch(Dispatchers.IO) {
             val streams = runCatching {
@@ -611,10 +615,10 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
         _ui.value = _ui.value.copy(guideFavoritesOnly = enabled)
     }
 
-    fun toggleGuideFavorite(streamId: String) {
+    fun toggleFavoriteStream(streamId: String) {
         val portal = _ui.value.activePortal ?: return
         val updated = IptvFavoritesStore.toggleId(getApplication(), keyOf(portal), streamId)
-        _ui.value = _ui.value.copy(guideFavoriteIds = updated)
+        _ui.value = _ui.value.copy(favoriteStreamIds = updated)
     }
 
     fun openSection(section: IptvSection) {
@@ -640,6 +644,9 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
             browserSelectedCategoryId = LIVE_ALL_CATEGORY_ID,
             browserSearch = "",
             error = null,
+            favoriteStreamIds = if (section == IptvSection.LIVE) {
+                IptvFavoritesStore.loadIds(getApplication(), keyOf(portal))
+            } else emptySet(),
             // Reset live-only state and re-seed for LIVE.
             liveOnly = liveOnlyPref,
             aliveStreamIds = aliveIds,
@@ -1184,7 +1191,7 @@ class IptvViewModel(app: Application) : AndroidViewModel(app) {
                     guideSearch = "",
                     epgGuide = null,
                     guideError = null,
-                    guideFavoriteIds = emptySet(),
+                    favoriteStreamIds = emptySet(),
                     guideFavoritesOnly = false,
                 )
                 true

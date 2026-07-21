@@ -37,6 +37,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
@@ -1667,24 +1668,34 @@ private fun BrowserView(state: IptvUiState, vm: IptvViewModel) {
 
     val filtered = remember(
         state.browserAllStreams, state.browserSelectedCategoryId, state.browserSearch,
-        state.liveOnly, state.aliveStreamIds, state.isVerifyingAlive,
+        state.liveOnly, state.aliveStreamIds, state.isVerifyingAlive, state.favoriteStreamIds,
     ) {
         val q = state.browserSearch.trim().lowercase()
         val base = if (q.isNotEmpty()) {
             // Search overrides category filter — search across all.
             state.browserAllStreams.filter { it.name.lowercase().contains(q) }
-        } else if (state.browserSelectedCategoryId == LIVE_ALL_CATEGORY_ID) {
-            state.browserAllStreams
-        } else {
-            state.browserAllStreams.filter { it.categoryId == state.browserSelectedCategoryId }
+        } else when (state.browserSelectedCategoryId) {
+            LIVE_FAVORITES_CATEGORY_ID ->
+                state.browserAllStreams.filter { it.streamId in state.favoriteStreamIds }
+            LIVE_ALL_CATEGORY_ID -> state.browserAllStreams
+            else -> state.browserAllStreams.filter { it.categoryId == state.browserSelectedCategoryId }
         }
+        val sorted = if (section == IptvSection.LIVE &&
+            state.browserSelectedCategoryId == LIVE_ALL_CATEGORY_ID &&
+            state.favoriteStreamIds.isNotEmpty()
+        ) {
+            base.sortedWith(
+                compareByDescending<IptvStream> { it.streamId in state.favoriteStreamIds }
+                    .thenBy { it.name.lowercase() },
+            )
+        } else base
         // Live-only filter (LIVE section). While verifying we progressively
         // reveal the streams that have been confirmed alive.
         if (section == IptvSection.LIVE && state.liveOnly &&
             (state.aliveCheckedAt > 0L || state.isVerifyingAlive)
         ) {
-            base.filter { it.streamId in state.aliveStreamIds }
-        } else base
+            sorted.filter { it.streamId in state.aliveStreamIds }
+        } else sorted
     }
 
     Column(
@@ -1702,6 +1713,12 @@ private fun BrowserView(state: IptvUiState, vm: IptvViewModel) {
         if (section == IptvSection.LIVE) {
             Spacer(Modifier.height(14.dp))
             LiveOnlyBar(state = state, vm = vm, toggleFocus = liveOnlyFocus)
+            Text(
+                "Long-press a channel to favorite · Stars sync with TV Guide",
+                color = TextDim2,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(top = 8.dp, start = 2.dp),
+            )
         }
         Spacer(Modifier.height(20.dp))
 
@@ -1758,6 +1775,20 @@ private fun BrowserView(state: IptvUiState, vm: IptvViewModel) {
                             modifier = Modifier.focusRequester(sidebarFirstFocus),
                         )
                     }
+                    if (section == IptvSection.LIVE) {
+                        item {
+                            val favCount = state.browserAllStreams.count {
+                                it.streamId in state.favoriteStreamIds
+                            }
+                            SidebarCategory(
+                                name = "Favorites",
+                                count = favCount,
+                                selected = state.browserSelectedCategoryId == LIVE_FAVORITES_CATEGORY_ID,
+                                accent = accent,
+                                onClick = { vm.selectBrowserCategory(LIVE_FAVORITES_CATEGORY_ID) },
+                            )
+                        }
+                    }
                     items(state.categories) { c ->
                         val count = remember(c.id, countingStreams) {
                             countingStreams.count { it.categoryId == c.id }
@@ -1803,13 +1834,29 @@ private fun BrowserView(state: IptvUiState, vm: IptvViewModel) {
                             "Nothing matches \"${state.browserSearch}\"."
                         else state.error ?: "Nothing here.",
                     )
-                    section == IptvSection.LIVE -> LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                        contentPadding = PaddingValues(end = 4.dp),
-                    ) {
-                        itemsIndexed(filtered) { index, s ->
-                            LiveChannelRow(s, index + 1, accent) {
-                                playStream(ctx, portal, s)
+                    section == IptvSection.LIVE -> {
+                        if (state.browserSelectedCategoryId == LIVE_FAVORITES_CATEGORY_ID &&
+                            state.favoriteStreamIds.isEmpty() && state.browserSearch.isEmpty()
+                        ) {
+                            EmptyState(
+                                Icons.Outlined.StarBorder,
+                                "No favorite channels",
+                                "Long-press a channel to star it, or star channels in the TV Guide.",
+                            )
+                        } else LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            contentPadding = PaddingValues(end = 4.dp),
+                        ) {
+                            itemsIndexed(filtered) { index, s ->
+                                LiveChannelRow(
+                                    s = s,
+                                    number = index + 1,
+                                    accent = accent,
+                                    isFavorite = s.streamId in state.favoriteStreamIds,
+                                    onToggleFavorite = { vm.toggleFavoriteStream(s.streamId) },
+                                ) {
+                                    playStream(ctx, portal, s)
+                                }
                             }
                         }
                     }
@@ -1966,34 +2013,38 @@ private fun SearchField(
     )
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LiveChannelRow(
     s: IptvStream,
     number: Int,
     accent: Color,
+    isFavorite: Boolean = false,
+    onToggleFavorite: () -> Unit = {},
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
-    Card(
-        onClick = onClick,
+    Box(
         modifier = modifier
             .fillMaxWidth()
-            .onFocusChanged { focused = it.isFocused },
-        colors = CardDefaults.colors(containerColor = Color.Transparent),
-        scale = CardDefaults.scale(focusedScale = 1f),
-        shape = CardDefaults.shape(RoundedCornerShape(10.dp)),
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onToggleFavorite,
+            )
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (focused) Surface2 else Surface1)
+            .border(
+                width = 1.dp,
+                color = if (focused) accent else Stroke,
+                shape = RoundedCornerShape(10.dp),
+            ),
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .background(if (focused) Surface2 else Surface1)
-                .border(
-                    width = 1.dp,
-                    color = if (focused) accent else Stroke,
-                    shape = RoundedCornerShape(10.dp),
-                )
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -2038,6 +2089,13 @@ private fun LiveChannelRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            Icon(
+                imageVector = if (isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                contentDescription = if (isFavorite) "Favorite" else "Not favorite",
+                tint = if (isFavorite) Color(0xFFFBBF24) else TextDim2,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(8.dp))
             if (focused) {
                 Icon(
                     Icons.Filled.PlayArrow,
@@ -2794,7 +2852,7 @@ private fun TvGuideView(state: IptvUiState, vm: IptvViewModel) {
     val channelFocus = remember { FocusRequester() }
     val favFilterFocus = remember { FocusRequester() }
     val query = state.guideSearch.trim().lowercase()
-    val favIds = state.guideFavoriteIds
+    val favIds = state.favoriteStreamIds
     var channels = state.guideChannels
     if (query.isNotEmpty()) {
         channels = channels.filter {
@@ -2920,7 +2978,7 @@ private fun TvGuideView(state: IptvUiState, vm: IptvViewModel) {
                         isFavorite = ch.stream.streamId in favIds,
                         focusRequester = if (idx == 0) channelFocus else null,
                         onClick = { vm.selectGuideChannel(ch) },
-                        onToggleFavorite = { vm.toggleGuideFavorite(ch.stream.streamId) },
+                        onToggleFavorite = { vm.toggleFavoriteStream(ch.stream.streamId) },
                     )
                 }
             }
@@ -2975,7 +3033,7 @@ private fun TvGuideView(state: IptvUiState, vm: IptvViewModel) {
                         }
                         GuideFavoriteButton(
                             isFavorite = selectedFav,
-                            onToggle = { vm.toggleGuideFavorite(selected.stream.streamId) },
+                            onToggle = { vm.toggleFavoriteStream(selected.stream.streamId) },
                         )
                         Spacer(Modifier.width(8.dp))
                         Card(
