@@ -45,6 +45,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -63,6 +64,9 @@ import coil.compose.AsyncImage
 import com.playtorrio.tv.data.profile.AvatarCatalog
 import com.playtorrio.tv.data.profile.Profile
 import com.playtorrio.tv.data.profile.ProfileManager
+import com.playtorrio.tv.data.cloud.PlayTorrioCloudRepository
+import com.playtorrio.tv.ui.screens.cloud.PlayTorrioCloudSignInCard
+import kotlinx.coroutines.launch
 
 private val AccentPrimary = Color(0xFF818CF8)
 private val SurfaceGlass = Color.White.copy(alpha = 0.06f)
@@ -71,12 +75,33 @@ private val SurfaceGlassBorder = Color.White.copy(alpha = 0.1f)
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun ProfileSelectScreen(navController: NavController) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     var profiles by remember { mutableStateOf(ProfileManager.loadProfiles()) }
     var editing by remember { mutableStateOf(false) }
     var creating by remember { mutableStateOf(false) }
     var profileToEdit by remember { mutableStateOf<Profile?>(null) }
+    var syncing by remember { mutableStateOf(false) }
+    var syncStatus by remember { mutableStateOf<String?>(null) }
 
     val refresh: () -> Unit = { profiles = ProfileManager.loadProfiles() }
+
+    fun selectProfile(profile: Profile) {
+        if (syncing) return
+        scope.launch {
+            ProfileManager.setActive(profile.id)
+            if (PlayTorrioCloudRepository.isSignedIn(ctx)) {
+                syncing = true
+                syncStatus = "Syncing ${profile.name}…"
+                runCatching { PlayTorrioCloudRepository.pullForActiveProfile(ctx) }
+                    .onFailure { syncStatus = it.message ?: "Sync failed" }
+                syncing = false
+            }
+            navController.navigate("home") {
+                popUpTo("profile_select") { inclusive = true }
+            }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -128,6 +153,13 @@ fun ProfileSelectScreen(navController: NavController) {
 
             Spacer(Modifier.height(48.dp))
 
+            PlayTorrioCloudSignInCard(
+                compact = true,
+                onSignedIn = refresh,
+            )
+
+            Spacer(Modifier.height(28.dp))
+
             // Profile row (wrapping FlowRow-ish via a simple Row, max 5 fits)
             Row(
                 horizontalArrangement = Arrangement.spacedBy(28.dp),
@@ -138,12 +170,7 @@ fun ProfileSelectScreen(navController: NavController) {
                         profile = profile,
                         editing = editing,
                         canDelete = profiles.size > 1,
-                        onSelect = {
-                            ProfileManager.setActive(profile.id)
-                            navController.navigate("home") {
-                                popUpTo("profile_select") { inclusive = true }
-                            }
-                        },
+                        onSelect = { selectProfile(profile) },
                         onEdit = { profileToEdit = profile },
                         onDelete = {
                             ProfileManager.delete(profile.id)
@@ -174,6 +201,25 @@ fun ProfileSelectScreen(navController: NavController) {
                     color = Color.White.copy(alpha = 0.4f),
                     fontSize = 12.sp
                 )
+            }
+        }
+
+        if (syncing) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.72f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(color = AccentPrimary)
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        syncStatus ?: "Syncing…",
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 14.sp,
+                    )
+                }
             }
         }
 

@@ -44,9 +44,9 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import com.playtorrio.tv.data.cloud.CloudConfig
 import com.playtorrio.tv.data.cloud.PlayTorrioCloudRepository
 import com.playtorrio.tv.data.stremio.StremioAddonRepository
+import com.playtorrio.tv.ui.screens.cloud.PlayTorrioCloudSignInCard
 import kotlinx.coroutines.launch
 
 private val AccentPrimary = Color(0xFF818CF8)
@@ -57,19 +57,9 @@ fun PlayTorrioCloudAccountSection(
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var email by remember { mutableStateOf(PlayTorrioCloudRepository.signedInEmail(ctx).orEmpty()) }
-    var password by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    var signedIn by remember { mutableStateOf(PlayTorrioCloudRepository.isSignedIn(ctx)) }
-
-    LaunchedEffect(Unit) {
-        if (signedIn) {
-            runCatching { PlayTorrioCloudRepository.startupPullIfSignedIn(ctx) }
-            onAddonsChanged()
-        }
-    }
 
     Spacer(Modifier.height(32.dp))
     Text(
@@ -83,70 +73,13 @@ fun PlayTorrioCloudAccountSection(
     )
     Spacer(Modifier.height(12.dp))
 
-    if (!CloudConfig.isConfigured()) {
-        Text(
-            "PlayTorrio Cloud is unavailable.",
-            style = MaterialTheme.typography.bodySmall,
-            color = Color.White.copy(alpha = 0.45f),
-        )
-        return
-    }
-
-    Text(
-        text = if (signedIn) {
-            "Signed in as ${email.ifBlank { "your account" }}. Syncs continue watching, " +
-                "Stremio addons, and IPTV portals with PlayTorrio on your phone."
-        } else {
-            "Sign in with the same email and password as PlayTorrio on your phone. " +
-                "Syncs continue watching, Stremio addons, and IPTV portals."
-        },
-        style = MaterialTheme.typography.bodySmall,
-        color = Color.White.copy(alpha = 0.5f),
+    PlayTorrioCloudSignInCard(
+        compact = false,
+        onSignedIn = onAddonsChanged,
     )
-    Spacer(Modifier.height(12.dp))
 
-    if (!signedIn) {
-        CloudTextField(
-            value = email,
-            onValueChange = { email = it; error = null; message = null },
-            placeholder = "Email",
-            imeAction = ImeAction.Next,
-        )
-        Spacer(Modifier.height(8.dp))
-        CloudTextField(
-            value = password,
-            onValueChange = { password = it; error = null; message = null },
-            placeholder = "Password",
-            isPassword = true,
-            imeAction = ImeAction.Done,
-        )
+    if (PlayTorrioCloudRepository.isSignedIn(ctx)) {
         Spacer(Modifier.height(12.dp))
-        CloudActionButton(
-            label = if (busy) "" else "Sign in & sync",
-            busy = busy,
-            onClick = {
-                if (email.isBlank() || password.isBlank()) {
-                    error = "Email and password are required."
-                    return@CloudActionButton
-                }
-                scope.launch {
-                    busy = true
-                    error = null
-                    message = null
-                    PlayTorrioCloudRepository.signIn(ctx, email.trim(), password)
-                        .onSuccess {
-                            signedIn = true
-                            password = ""
-                            email = PlayTorrioCloudRepository.signedInEmail(ctx).orEmpty()
-                            onAddonsChanged()
-                            message = "Signed in and synced from PlayTorrio Cloud."
-                        }
-                        .onFailure { error = it.message ?: "Sign in failed." }
-                    busy = false
-                }
-            },
-        )
-    } else {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             CloudActionButton(
                 label = if (busy) "" else "Pull from cloud",
@@ -157,9 +90,9 @@ fun PlayTorrioCloudAccountSection(
                         error = null
                         message = null
                         runCatching {
-                            PlayTorrioCloudRepository.pullAll(ctx)
+                            PlayTorrioCloudRepository.pullForActiveProfile(ctx)
                             onAddonsChanged()
-                            message = "Pulled latest addons and continue watching."
+                            message = "Pulled latest data for this profile."
                         }.onFailure { error = it.message ?: "Pull failed." }
                         busy = false
                     }
@@ -175,22 +108,10 @@ fun PlayTorrioCloudAccountSection(
                         message = null
                         runCatching {
                             PlayTorrioCloudRepository.pushAll(ctx)
-                            message = "Pushed addons and continue watching to cloud."
+                            message = "Pushed profile data to cloud."
                         }.onFailure { error = it.message ?: "Push failed." }
                         busy = false
                     }
-                },
-            )
-            CloudActionButton(
-                label = if (busy) "" else "Sign out",
-                busy = false,
-                onClick = {
-                    PlayTorrioCloudRepository.signOut(ctx)
-                    signedIn = false
-                    email = ""
-                    password = ""
-                    message = "Signed out."
-                    error = null
                 },
             )
         }
@@ -204,43 +125,6 @@ fun PlayTorrioCloudAccountSection(
         Spacer(Modifier.height(10.dp))
         Text(it, color = Color(0xFFF87171), fontSize = 13.sp)
     }
-}
-
-@Composable
-private fun CloudTextField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    placeholder: String,
-    isPassword: Boolean = false,
-    imeAction: ImeAction,
-) {
-    var focused by remember { mutableStateOf(false) }
-    BasicTextField(
-        value = value,
-        onValueChange = onValueChange,
-        singleLine = true,
-        textStyle = TextStyle(color = Color.White, fontSize = 14.sp),
-        cursorBrush = SolidColor(AccentPrimary),
-        visualTransformation = if (isPassword) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
-        keyboardOptions = KeyboardOptions(imeAction = imeAction),
-        modifier = Modifier
-            .fillMaxWidth(0.75f)
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (focused) Color.White.copy(alpha = 0.08f) else Color.White.copy(alpha = 0.04f))
-            .border(
-                1.dp,
-                if (focused) AccentPrimary.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.08f),
-                RoundedCornerShape(10.dp),
-            )
-            .onFocusChanged { focused = it.hasFocus }
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        decorationBox = { inner ->
-            if (value.isEmpty()) {
-                Text(placeholder, color = Color.White.copy(alpha = 0.3f), fontSize = 14.sp)
-            }
-            inner()
-        },
-    )
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)

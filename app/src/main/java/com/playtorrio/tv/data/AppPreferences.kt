@@ -29,6 +29,7 @@ object AppPreferences {
     private const val KEY_SAVED_AUDIOBOOKS = "saved_audiobooks_v1"
     private const val KEY_AUDIOBOOK_PROGRESS = "audiobook_progress_v1"
     private const val KEY_WATCH_PROGRESS = "watch_progress_v1"
+    private const val KEY_MY_LIST_ITEMS = "my_list_items"
 
     private lateinit var prefs: SharedPreferences
 
@@ -157,6 +158,11 @@ object AppPreferences {
     var watchProgress: String
         get() = prefs.getString(KEY_WATCH_PROGRESS, "[]") ?: "[]"
         set(value) = prefs.edit().putString(KEY_WATCH_PROGRESS, value).apply()
+
+    /** JSON-encoded list of My List bookmarks (movies & shows). */
+    var myListItems: String
+        get() = prefs.getString(KEY_MY_LIST_ITEMS, "[]") ?: "[]"
+        set(value) = prefs.edit().putString(KEY_MY_LIST_ITEMS, value).apply()
 
     fun applyTorrentPreset(preset: String) {
         when (preset.lowercase()) {

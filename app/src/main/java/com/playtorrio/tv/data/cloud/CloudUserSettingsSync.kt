@@ -3,6 +3,7 @@ package com.playtorrio.tv.data.cloud
 import android.content.Context
 import android.util.Log
 import com.google.gson.Gson
+import com.playtorrio.tv.data.mylist.MyListStore
 import com.playtorrio.tv.data.stremio.AddonManifest
 import com.playtorrio.tv.data.stremio.InstalledAddon
 import com.playtorrio.tv.data.stremio.StremioAddonRepository
@@ -17,6 +18,7 @@ import org.json.JSONObject
 object CloudUserSettingsSync {
     private const val TAG = "CloudUserSettings"
     private const val PREFS_STREMIO_ADDONS = "stremio_addons"
+    private const val PREFS_MY_LIST = "my_list_items"
     private const val PREFER_UPSERT = "return=minimal,resolution=merge-duplicates"
 
     private val gson = Gson()
@@ -29,6 +31,11 @@ object CloudUserSettingsSync {
         if (addons.isNotEmpty()) {
             StremioAddonRepository.replaceAllAddons(addons)
         }
+        val myList = CloudMyListMerge.parseFromPrefsValue(prefs.opt(PREFS_MY_LIST))
+        if (myList.isNotEmpty()) {
+            val merged = CloudMyListMerge.merge(MyListStore.load(), myList)
+            MyListStore.replaceAll(merged)
+        }
     }
 
     suspend fun push(ctx: Context, session: CloudSession) {
@@ -36,6 +43,7 @@ object CloudUserSettingsSync {
         val existing = fetchPrefs(ctx, session, profileId) ?: JSONObject()
         val merged = JSONObject(existing.toString())
         merged.put(PREFS_STREMIO_ADDONS, addonsToJsonArray(StremioAddonRepository.getAddons()))
+        merged.put(PREFS_MY_LIST, CloudMyListMerge.toJsonString(MyListStore.load()))
         upsertPrefs(ctx, session, profileId, merged)
     }
 

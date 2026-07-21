@@ -7,8 +7,8 @@ import com.playtorrio.tv.data.profile.ProfileManager
  * V2 namespaces IPTV portals per profile slot, not per arbitrary id string.
  */
 object CloudProfileId {
-    private const val MIN_ID = 1
-    private const val MAX_ID = 4
+    const val MIN_ID = 1
+    const val MAX_ID = 4
 
     fun activeProfileId(): Int {
         val profiles = ProfileManager.loadProfiles()

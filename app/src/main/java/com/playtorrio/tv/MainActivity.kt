@@ -72,7 +72,6 @@ class MainActivity : ComponentActivity() {
         AppPreferences.init(this)
         CoroutineScope(Dispatchers.IO).launch {
             TorrServerService.warmup(this@MainActivity)
-            com.playtorrio.tv.data.cloud.PlayTorrioCloudRepository.startupPullIfSignedIn(this@MainActivity)
         }
 
         setContent {

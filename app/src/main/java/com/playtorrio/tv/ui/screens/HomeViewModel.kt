@@ -14,6 +14,8 @@ import com.playtorrio.tv.data.trailer.TrailerService
 import com.playtorrio.tv.data.stremio.StremioMetaPreview
 import com.playtorrio.tv.data.watch.WatchProgress
 import com.playtorrio.tv.data.watch.WatchProgressStore
+import com.playtorrio.tv.data.mylist.MyListItem
+import com.playtorrio.tv.data.mylist.MyListStore
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -37,7 +39,8 @@ data class HomeUiState(
     val isTrailerPlaying: Boolean = false,
     val addonRows: List<BoardRow> = emptyList(),
     val continueWatching: List<WatchProgress> = emptyList(),
-    val continueWatchingEditMode: Boolean = false
+    val continueWatchingEditMode: Boolean = false,
+    val myList: List<MyListItem> = emptyList(),
 )
 
 class HomeViewModel : ViewModel() {
@@ -59,6 +62,7 @@ class HomeViewModel : ViewModel() {
     init {
         loadContent()
         refreshContinueWatching()
+        refreshMyList()
     }
 
     fun refreshAddonRows() {
@@ -273,6 +277,10 @@ class HomeViewModel : ViewModel() {
             continueWatchingEditMode = _uiState.value.continueWatchingEditMode
                 && WatchProgressStore.load().isNotEmpty()
         )
+    }
+
+    fun refreshMyList() {
+        _uiState.value = _uiState.value.copy(myList = MyListStore.load())
     }
 
     fun toggleContinueWatchingEditMode() {

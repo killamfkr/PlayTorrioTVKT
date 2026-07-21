@@ -34,6 +34,7 @@ import com.playtorrio.tv.data.torrent.TorrServerService
 import com.playtorrio.tv.data.watch.WatchKind
 import com.playtorrio.tv.data.watch.WatchProgress
 import com.playtorrio.tv.data.watch.WatchProgressStore
+import com.playtorrio.tv.data.cloud.PlayTorrioCloudRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -1333,6 +1334,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
         try {
             WatchProgressStore.upsert(entry)
+            PlayTorrioCloudRepository.schedulePushWatchHistory(getApplication())
         } catch (e: Exception) {
             Log.w(TAG, "saveCurrentProgress failed: ${e.message}")
         }

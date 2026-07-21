@@ -39,7 +39,10 @@ import androidx.navigation.NavController
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.Icon
 import com.playtorrio.tv.data.model.*
 import com.playtorrio.tv.ui.screens.detail.CastInfo
@@ -52,6 +55,9 @@ import android.content.Intent
 import android.net.Uri
 import com.playtorrio.tv.PlayerActivity
 import com.playtorrio.tv.data.AppPreferences
+import com.playtorrio.tv.data.cloud.PlayTorrioCloudRepository
+import com.playtorrio.tv.data.mylist.MyListItem
+import com.playtorrio.tv.data.mylist.MyListStore
 import com.playtorrio.tv.data.stremio.StremioService
 import com.playtorrio.tv.data.stremio.StreamRoute
 import com.playtorrio.tv.ui.screens.detail.StreamingSplash
@@ -640,6 +646,61 @@ private fun DetailContent(
                                     .background(statusColor.copy(alpha = 0.1f), RoundedCornerShape(4.dp))
                                     .padding(horizontal = 8.dp, vertical = 3.dp)
                             )
+                        }
+                    }
+
+                    state.mediaId?.takeIf { it > 0 }?.let { id ->
+                        val ctx = LocalContext.current
+                        val mediaType = if (state.isMovie) "movie" else "tv"
+                        val listId = MyListItem.movieId(id, mediaType)
+                        var inList by remember(id, state.isMovie) {
+                            mutableStateOf(MyListStore.contains(listId))
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        var listFocused by remember { mutableStateOf(false) }
+                        Card(
+                            onClick = {
+                                val item = MyListItem(
+                                    uniqueId = listId,
+                                    tmdbId = id,
+                                    imdbId = null,
+                                    title = state.title,
+                                    posterPath = state.posterUrl,
+                                    mediaType = mediaType,
+                                    voteAverage = state.voteAverage ?: 0.0,
+                                    releaseDate = state.year ?: state.yearRange.orEmpty(),
+                                    source = "tmdb",
+                                )
+                                inList = MyListStore.toggle(item)
+                                PlayTorrioCloudRepository.schedulePushSettings(ctx)
+                            },
+                            modifier = Modifier.onFocusChanged { listFocused = it.isFocused },
+                            scale = CardDefaults.scale(focusedScale = 1.04f),
+                            shape = CardDefaults.shape(RoundedCornerShape(8.dp)),
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .background(
+                                        if (listFocused) AccentPrimary.copy(alpha = 0.35f)
+                                        else SurfaceGlass,
+                                    )
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Icon(
+                                    imageVector = if (inList) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder,
+                                    contentDescription = if (inList) "Remove from My List" else "Add to My List",
+                                    tint = if (inList) AccentPrimary else Color.White.copy(alpha = 0.8f),
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Text(
+                                    if (inList) "In My List" else "Add to My List",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
                         }
                     }
 

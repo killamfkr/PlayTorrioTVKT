@@ -175,6 +175,7 @@ fun HomeScreen(navController: NavController, viewModel: HomeViewModel = viewMode
             if (event == Lifecycle.Event.ON_RESUME) {
                 viewModel.refreshAddonRows()
                 viewModel.refreshContinueWatching()
+                viewModel.refreshMyList()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -266,8 +267,9 @@ fun HomeScreen(navController: NavController, viewModel: HomeViewModel = viewMode
                 var pendingStreamingResume by remember { mutableStateOf<com.playtorrio.tv.data.watch.WatchProgress?>(null) }
                 var pendingAddonResume by remember { mutableStateOf<com.playtorrio.tv.data.watch.WatchProgress?>(null) }
                 val hasContinue = state.continueWatching.isNotEmpty()
-                val cwOffset = if (hasContinue) 1 else 0
-                val totalRows = 1 + cwOffset + state.rows.size + state.addonRows.size
+                val hasMyList = state.myList.isNotEmpty()
+                val extraOffset = (if (hasContinue) 1 else 0) + (if (hasMyList) 1 else 0)
+                val totalRows = 1 + extraOffset + state.rows.size + state.addonRows.size
                 val rowFocusRequesters = remember(totalRows) {
                     List(totalRows.coerceAtLeast(1)) { FocusRequester() }
                 }
@@ -417,9 +419,31 @@ fun HomeScreen(navController: NavController, viewModel: HomeViewModel = viewMode
                             }
                         }
 
+                        if (hasMyList) {
+                            item(key = "my_list_row") {
+                                MyListRow(
+                                    items = state.myList,
+                                    initialFocusIndex = if (viewModel.lastFocusedRowIndex == 1 + (if (hasContinue) 1 else 0)) {
+                                        viewModel.lastFocusedItemIndex
+                                    } else 0,
+                                    focusRequester = rowFocusRequesters.getOrElse(1 + (if (hasContinue) 1 else 0)) { FocusRequester() },
+                                    navFocusRequester = navFocusRequester,
+                                    onItemFocused = { itemIdx ->
+                                        viewModel.saveFocusPosition(1 + (if (hasContinue) 1 else 0), itemIdx)
+                                    },
+                                    onItemClicked = { item ->
+                                        val tmdbId = item.tmdbId
+                                        if (tmdbId != null && tmdbId > 0) {
+                                            navController.navigate("detail/$tmdbId/${item.isMovie}")
+                                        }
+                                    },
+                                )
+                            }
+                        }
+
                         // Content rows
                         itemsIndexed(state.rows, key = { _, row -> row.title }) { index, row ->
-                            val rowIdx = 1 + cwOffset + index
+                            val rowIdx = 1 + extraOffset + index
                             ContentRow(
                                 title = row.title,
                                 items = row.items,
@@ -442,7 +466,7 @@ fun HomeScreen(navController: NavController, viewModel: HomeViewModel = viewMode
                             state.addonRows,
                             key = { _, row -> "${row.addonId}_${row.catalogType}_${row.catalogId}" }
                         ) { addonIndex, addonRow ->
-                            val rowIndex = 1 + cwOffset + state.rows.size + addonIndex
+                            val rowIndex = 1 + extraOffset + state.rows.size + addonIndex
                             val itemType = addonRow.items.firstOrNull()?.type ?: "movie"
                             StremioAddonRow(
                                 row = addonRow,
@@ -1668,6 +1692,80 @@ private val ContinueAccent = Color(0xFF818CF8)
 private val ContinuePanel = Color(0xFF1F2233)
 private val ContinuePanelLight = Color(0xFF2A2F45)
 private val ContinueTextDim = Color(0xFF94A3B8)
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun MyListRow(
+    items: List<com.playtorrio.tv.data.mylist.MyListItem>,
+    initialFocusIndex: Int,
+    focusRequester: FocusRequester,
+    navFocusRequester: FocusRequester,
+    onItemFocused: (Int) -> Unit,
+    onItemClicked: (com.playtorrio.tv.data.mylist.MyListItem) -> Unit,
+) {
+    val openNavBar = LocalOpenNavBar.current
+    Column(modifier = Modifier.padding(top = 4.dp, bottom = 6.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 48.dp, bottom = 6.dp),
+        ) {
+            Text("My List", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.width(8.dp))
+            Text("· ${items.size}", color = ContinueTextDim, fontSize = 11.sp)
+        }
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(start = 48.dp, end = 48.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(focusRequester)
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
+                        openNavBar(); true
+                    } else false
+                }
+                .focusGroup(),
+        ) {
+            itemsIndexed(items, key = { _, it -> it.uniqueId }) { idx, item ->
+                var focused by remember { mutableStateOf(false) }
+                Card(
+                    onClick = { onItemClicked(item) },
+                    modifier = Modifier
+                        .width(120.dp)
+                        .onFocusChanged {
+                            focused = it.isFocused
+                            if (it.isFocused) onItemFocused(idx + 1)
+                        },
+                    scale = CardDefaults.scale(focusedScale = 1.06f),
+                    shape = CardDefaults.shape(RoundedCornerShape(8.dp)),
+                ) {
+                    Column {
+                        AsyncImage(
+                            model = item.posterUrl(),
+                            contentDescription = item.title,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(2f / 3f)
+                                .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)),
+                        )
+                        Text(
+                            item.title,
+                            color = if (focused) Color.White else Color.White.copy(alpha = 0.85f),
+                            fontSize = 11.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                        )
+                    }
+                }
+            }
+        }
+        LaunchedEffect(initialFocusIndex, items.size) {
+            // Focus restore handled by parent row focus requester
+        }
+    }
+}
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
